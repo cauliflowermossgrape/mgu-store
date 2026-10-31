@@ -133,7 +133,7 @@ stick holding `catalog.json` at its root, in `mgu-repo/` or
 | Field | |
 |---|---|
 | `id`, `kind`, `version` | required; `kind` is `app` or `tool`, `version` is `x.y.z`; each id once |
-| `artifact` | required: `name` is `<id>@<version>.tgz`; `size` and `sha256` are checked before anything installs; `url` is absolute, or relative to the catalog for an HTTPS or folder catalog. In a GitHub `catalog` release it is the asset's API URL (`https://api.github.com/repos/<owner>/<repo>/releases/assets/<n>`) |
+| `artifact` | required: `name` is `<id>@<version>.tgz`; `size` and `sha256` are checked before anything installs; `url` is absolute, or relative to the catalog for an HTTPS or folder catalog. In a GitHub `catalog` release it is, for a public repository, the asset's release download (`https://github.com/<owner>/<repo>/releases/download/<tag>/<name>`, the asset's `browser_download_url`), which a car without a token downloads without GitHub's API and its rate limit; for a private one, the asset's API URL (`https://api.github.com/repos/<owner>/<repo>/releases/assets/<n>`), which it downloads with its token |
 | `title`, `description`, `author` | shown in the Store |
 | `icon`, `iconSha256` | a PNG of at most 128 KiB: absolute (https) or relative to the catalog; in a GitHub `catalog` release, the name of one of its assets |
 | `build` | `"unit"`: the artifact is a source package, built on the head unit (an app only) |

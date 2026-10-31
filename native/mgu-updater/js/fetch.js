@@ -24,7 +24,8 @@
  *
  * Redirects of a GET are followed (up to 5, https only); the request headers
  * go to the first host only, so a token never reaches a redirect target such
- * as GitHub's asset storage. A POST is not redirected.
+ * as GitHub's asset storage: only User-Agent, If-None-Match and
+ * If-Modified-Since go along. A POST is not redirected.
  */
 const fs = require('fs');
 const dns = require('dns');
@@ -94,9 +95,15 @@ function get(job, url, headers, hops) {
                 process.exitCode = 1;
                 return;
             }
-            // first-host headers stay behind; only a user agent goes along
-            get(job, new URL(res.headers.location, url).toString(),
-                { 'User-Agent': headers['User-Agent'] }, hops + 1);
+            // first-host headers stay behind; only a user agent and a conditional request's
+            // validators go along (a release asset's ETag is its storage host's)
+            const along = {};
+            ['User-Agent', 'If-None-Match', 'If-Modified-Since'].forEach((h) => {
+                if (headers[h] !== undefined) {
+                    along[h] = headers[h];
+                }
+            });
+            get(job, new URL(res.headers.location, url).toString(), along, hops + 1);
             return;
         }
         if (res.statusCode === 304) {
