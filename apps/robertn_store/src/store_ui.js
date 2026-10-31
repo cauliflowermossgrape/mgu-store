@@ -41,7 +41,7 @@ const { t: tr } = require('./i18n.js');
  * uplink's state (state.uplink: mgu-uplink 0.7.0's status.json through the
  * updater) and are there only with its Wi-Fi.
  */
-const { PHASE, percent, rowAction, statusLine, sourceLabel, sourceState, sourceActions, sourceChannel, sourceAccount,
+const { PHASE, percent, rowAction, statusOf, sourceLabel, sourceState, sourceActions, sourceChannel, sourceAccount,
     tokenLabel, tokenState, tokenSources, accountsState, loginStatus, loginCode, phoneState, phoneAddress, hmiNames,
     notForUnit, removable, undoable, pickOptions, probeStatus, sourceNames, listed, startPending } = require('./store_view.js');
 
@@ -187,10 +187,15 @@ function storeView(m) {
     const list = comps(m).filter((c) => m.filter === 'all' || (m.filter === 'app' ? !isTool(c) : isTool(c)));
     const checking = !!(m.connected && m.st && m.st.catalog && m.st.catalog.checking);
     const online = m.connected && m.st && m.st.online;
+    const status = m.connected ? statusOf(st, true) : statusOf(null, false, m.secret);
+    // an error on the status line opens the page that shows it in full
+    const about = status.about || {};
+    const act = about.component ? { do: 'open', page: pageOf(about.component) }
+        : about.source ? { do: 'open', page: { name: 'source', id: about.source.id } } : null;
     return {
         title: { text: tr("Store") },
         subtitle: busyRow ? { text: `${busy.phase === 'download' ? tr("Downloading {0} %", percent(busy)) : tr(PHASE[busy.phase] || 'Installing')} · ${named(m, busyRow)}`, color: BLUE }
-            : { text: m.connected ? statusLine(st, true) : statusLine(null, false, m.secret), color: DIM },
+            : { text: status.text, color: DIM, act },
         filter: { sel: Math.max(0, FILTERS.indexOf(m.filter)), acts: FILTERS.map((f) => ({ do: 'filter', filter: f })) },
         online: { items: !m.connected ? [] : checking ? [{ text: tr("Checking"), color: BLUE, dot: true }]
             : online ? [{ text: tr("Online"), color: GREEN, dot: true }] : [{ text: tr("Offline"), color: AMBER, dot: true }] },
@@ -310,7 +315,8 @@ function appView(m, page) {
             c.listedId && !c.blocked && (c.installAs || c.id) !== c.listedId && { text: `Id ${c.installAs || c.id}` },
             { text: isTool(c) ? tr("Tool") : tr("App"), color: isTool(c) ? TEAL : BLUE }, c.mguHmi && c.mguHmi.length && { text: hmiNames(c.mguHmi) },
             c.provides && { text: c.provides }].filter(Boolean) },
-        desc: { text: c.description || '' },
+        // a failure in full, above the description
+        desc: { text: c.description || '', lead: c.error && !mine ? tr("Failed: {0}", c.error) : '', leadColor: RED },
         // what an installed tool says is wrong (the updater's problem: mgu-render's page template)
         problem: { text: c.problem || '' },
         instLabel: { text: tr("Installed") },
@@ -327,9 +333,6 @@ function appView(m, page) {
     }
     if (c.blocked) {
         notes.push([c.blocked, AMBER]);
-    }
-    if (c.error && !mine) {
-        notes.push([tr("Failed: {0}", c.error), RED]);
     }
     if (c.pendingReboot) {
         notes.push([tr("Restart pending"), AMBER]);

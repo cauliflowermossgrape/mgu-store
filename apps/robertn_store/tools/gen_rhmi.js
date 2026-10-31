@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Writes robertn_store@0.9.14's application.xml and uiDescription.json for
+ * Writes robertn_store@0.9.15's application.xml and uiDescription.json for
  * iDrive 7 (uiDescriptions/ID7) and iDrive 8 (uiDescriptions/ID8) from the
  * tables below, so container and component ids, names, widgets and cells
  * stay in lockstep.
@@ -78,7 +78,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PKG = path.join(__dirname, '..', 'robertn_store@0.9.14');
+const PKG = path.join(__dirname, '..', 'robertn_store@0.9.15');
 const DIR = (hmi) => path.join(PKG, 'rhmiData', 'uiDescriptions', hmi);
 const TEXTS = path.join(PKG, 'rhmiData', 'variantGroups', 'Common', 'texts');
 const ID7 = DIR('ID7');
@@ -86,11 +86,13 @@ const ID8 = DIR('ID8');
 const PROXIES = [48, 24, 12];
 
 /* Abstract components: kind button, row (two columns; a list too), label,
- * picture, progress. */
+ * text (a label wrapped over several rows: an error in full), picture,
+ * progress. */
 const button = (id, name, text) => ({ id, kind: 'button', name, text, focusable: 3 });
 const row = (id, name, text) => ({ id, kind: 'row', name, text, focusable: 3 });
 const list = (id, name) => ({ id, kind: 'row', name, text: '', focusable: 3 });
 const label = (id, name, text) => ({ id, kind: 'label', name, text: text || '', focusable: 0 });
+const text = (id, name, t) => ({ id, kind: 'text', name, text: t || '', focusable: 0 });
 const picture = (id, name) => ({ id, kind: 'picture', name, focusable: 0 });
 
 /* Each head unit's widget and cells for each kind. */
@@ -102,6 +104,7 @@ const WIDGETS = {
         button: (c) => ({ type: 'button', widget: 'LT_Button_1Row', cells: { Text: c.text } }),
         row: (c) => ({ type: 'button', widget: 'LT_Button_1Row_2Col7030_2Text', cells: { Text1stCol: c.text, Text2ndCol: '' } }),
         label: (c) => ({ type: 'label', widget: 'LT_Label_1Row', cells: { Text: c.text } }),
+        text: (c) => ({ type: 'label', widget: 'LT_Label_4Row_1TextDyn', cells: { Text: c.text } }),
         picture: () => ({ type: 'label', widget: 'LT_Label_1Graphic_Scalable', cells: {} }),
         progress: () => ({ type: 'progressBar', widget: 'LT_Progressbar_Ent_ProgressBig', cells: { TextLeft: '', TextRight: '' } })
     },
@@ -110,6 +113,7 @@ const WIDGETS = {
         button: (c) => ({ type: 'button', widget: 'LT_Button_MediaEntry_1Row', cells: media(c.text, null) }),
         row: (c) => ({ type: 'button', widget: 'LT_Button_MediaEntry_1Row', cells: media(c.text, '') }),
         label: (c) => ({ type: 'label', widget: 'LT_ScrollLabel', cells: { Text: c.text } }),
+        text: (c) => ({ type: 'label', widget: 'LT_ScrollLabel', cells: { Text: c.text } }),
         picture: () => ({ type: 'label', widget: null, cells: {} }),
         progress: () => ({ type: 'button', widget: 'LT_Button_MediaEntry_1Row', cells: media('', '') })
     }
@@ -127,7 +131,7 @@ function state(id, name, titleId, title, parent, components) {
 const MAIN = {
     id: 1, name: 'ST_OnlineApps_Store', titleId: 10, title: { value: 'SID_STORE_TITLE', type: 'StringId' },
     components: [
-        label(20, 'storeStatus', 'Store'),
+        text(20, 'storeStatus', 'Store'),
         button(21, 'storeCheck', 'Check for updates'),
         { id: 22, kind: 'progress', name: 'storeProgress', focusable: 0 },
         row(23, 'storeNavApps', 'Apps'),
@@ -151,7 +155,7 @@ const SOURCE = state(6, 'ST_OnlineApps_StoreSource', 15, 'Source', SOURCES.id, [
     row(28, 'storeSrcChannel', 'Channel'),
     row(85, 'storeSrcAccount', 'Account'),
     row(86, 'storeSrcComponents', 'Components'),
-    label(89, 'storeSrcError'),
+    text(89, 'storeSrcError'),
     button(88, 'storeSrcRemove', 'Remove'),
     label(67, 'storeSrcAppLabel', 'Install on GitHub'),
     picture(68, 'storeSrcAppQr'),

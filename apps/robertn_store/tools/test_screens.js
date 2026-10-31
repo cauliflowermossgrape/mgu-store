@@ -222,8 +222,8 @@ eq(text(laterOf({ stack: [{ name: 'main' }, { name: 'app', id: 'car_vitals' }, {
 later.components = [Object.assign({}, later.components[0], { pendingReboot: false, nextStart: null,
     error: 'the install at the start of the head unit failed: package checksum mismatch at /x' })];
 f = laterOf({ stack: [{ name: 'main' }, { name: 'app', id: 'car_vitals' }] });
-eq([f.items.map((i) => i.label).slice(0, -4), text(f, 'note1')],
-    [['Try again', 'Back'], 'Failed: the install at the start of the head unit failed: package checksum mismatch at /x'.slice(0, 80)]);
+eq([f.items.map((i) => i.label).slice(0, -4), f.values.desc.lead],
+    [['Try again', 'Back'], 'Failed: the install at the start of the head unit failed: package checksum mismatch at /x']);
 // with the updater's applyFailed: a failed first install also has Remove (clears it); a failed removal's Try again removes
 later.components[0].applyFailed = 'install';
 eq(laterOf({ stack: [{ name: 'main' }, { name: 'app', id: 'car_vitals' }] }).items.map((i) => i.label).slice(0, -4),
@@ -233,6 +233,39 @@ later.components = [Object.assign({}, fixture.state().components[1], { status: '
 f = laterOf({ stack: [{ name: 'main' }, { name: 'app', id: 'doom' }] });
 eq([f.items.map((i) => i.label).slice(0, -4), f.items[0].act], [['Try again', 'Back'], { do: 'open', page: { name: 'confirm', kind: 'remove', id: 'doom' } }],
     'a failed removal is tried again');
+
+// an error of about 200 characters is drawn in full, in either unit's box: on a component's page above its description,
+// on a source's page; the status line naming one opens that page
+const { Recorder } = require(path.join(__dirname, '..', 'src', 'kit_record.js'));
+const LONG = fixture.LONG_ERROR;
+Object.keys(UNITS).forEach((unit) => {
+    const p = UNITS[unit];
+    const shown = (name) => {
+        const s = fixture.screens().find((x) => x[0] === name);
+        const m = fixture.model(s[1], Object.assign(fixture.state(), s[2] || {}));
+        const texts = [];
+        const draw = Recorder.prototype.text;
+        Recorder.prototype.text = function (str) { texts.push(str); return draw.apply(this, arguments); };
+        try {
+            return Object.assign(frame(m, { textScale: p.scale, focus: -1, scroll: {}, layout: p.layout }), { texts: texts.join(' ') });
+        } finally {
+            Recorder.prototype.text = draw;
+        }
+    };
+    let e = shown('app-failed');
+    ok(e.texts.indexOf(`Failed: ${LONG}`) >= 0, `${unit}: the page's failure in full (${e.texts})`);
+    eq([text(e, 'note1'), e.items[0].label], ['', 'Try again'], `${unit}: not cut into the panel's notes`);
+    e = shown('source-failed');
+    ok(e.texts.indexOf(LONG) >= 0, `${unit}: the source's error in full (${e.texts})`);
+    e = shown('store-failed');
+    eq([e.items[4].label, e.items[4].act], [`Vehicle control: ${LONG}`, { do: 'open', page: { name: 'app', id: 'vehicle_control', source: 'mgu-store',
+        listed: 'vehicle_control' } }], `${unit}: the status line opens the failed component's page`);
+    e = shown('store-check-failed');
+    eq([e.items[4].label, e.items[4].act], [`Check failed: IterioDev/car-apps: ${LONG}`, { do: 'open', page: { name: 'source', id: 'car-apps' } }],
+        `${unit}: Check failed opens the source's page`);
+    eq(e.items.slice(5, 8).map((i) => i.label), ['All', 'Apps', 'Tools'], `${unit}: then the filters`);
+});
+eq(screen('store').items[4].label, 'All', 'a status line without an error is not pressed');
 
 // confirm steps: Cancel first
 f = screen('confirm-remove');

@@ -28,12 +28,15 @@ const DRAW = {
         const c = t[o.color] || o.color || t.text;
         if (!o.wrap) return cv.text(W.fit(cv, o.text, b.w, o.size, o.font), o.align === 'center' ? b.x + b.w / 2 : o.align === 'right' ? b.x + b.w : b.x,
             b.y + o.size * 0.8, o.size, c, { font: o.font, align: o.align });
-        // wrapped (left aligned): each line of the text a paragraph, as many lines as the box holds
+        // wrapped (left aligned): each line of the text a paragraph, as many lines as the box holds; o.lead a first
+        // paragraph in o.leadColor
         let y = b.y;
-        for (const para of String(o.text).split('\n')) {
+        const paras = String(o.text).split('\n').map((p) => [p, c]);
+        if (o.lead) paras.unshift([o.lead, t[o.leadColor] || o.leadColor || c]);
+        for (const [para, pc] of paras) {
             const room = Math.floor((b.y + b.h - y) / (o.size * 1.25));
             if (room < 1) break;
-            y += Math.max(1, W.wrap(cv, para, b.x, y, b.w, o.size, c, room, o.font)) * o.size * 1.25;
+            y += Math.max(1, W.wrap(cv, para, b.x, y, b.w, o.size, pc, room, o.font)) * o.size * 1.25;
         }
     },
     rect: (cv, t, b, o) => cv.roundRect(b.x, b.y, b.w, b.h, Math.min(o.radius || 0, b.w / 2, b.h / 2), t[o.color] || o.color || t.panelTop),

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.15
+
+An error shows in full. A component's page has its failure above the
+description, wrapped over as many lines as it takes, and a press on the
+status line's failure or `Check failed: …` opens the page of the component
+or source it names. On iDrive 7's widget screens the status line and a
+source's error wrap over up to four rows.
+
 ## 0.9.14
 
 Undo update on the page of an app or tool the updater can take back to its

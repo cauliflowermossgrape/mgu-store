@@ -201,6 +201,8 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 15));
 const HIDE_MS = 800;                    // src/store.js HIDE_SETTLE_MS
 const comp = (o) => Object.assign({ id: 'doom', kind: 'app', title: 'DOOM', version: '1.0.1', installed: '1.0.1',
     status: 'installed', queued: false, error: null, uninstallable: true }, o);
+const LONG = 'the build failed (exit 1): no oap-sdk donor among the installed apps carries OnlineApp.js, ' +
+    'so robertn_doom@1.0.1 cannot be linked; install any stock app again, or another app that ships the SDK';
 const base = { type: 'state', online: true, busy: null, rebooting: false, catalog: { checking: false, checkedAt: 1 } };
 const ST = Object.assign({}, base, {
     components: [comp({})],
@@ -272,6 +274,15 @@ function run() {
         return tick();
     }).then(() => {
         eq(last(/storeStatus\.\d*\.?Text/).split('=')[1], 'Updater not running');
+        // an error of any length is written whole: the status line and a source's error wrap over their rows
+        app._sourceId = 'idrive7-apps';
+        app._client.emit('state', Object.assign({}, ST, { components: [comp({ error: LONG })],
+            sources: ST.sources.map((s) => (s.id === 'idrive7-apps' ? Object.assign({}, s, { status: 'error', error: LONG }) : s)) }));
+        return tick();
+    }).then(() => {
+        eq(last(/storeStatus\.\d*\.?Text/).split('=').slice(1).join('='), `DOOM: ${LONG}`);
+        eq(last(/storeSrcError\.\d*\.?Text/).split('=').slice(1).join('='), LONG);
+        app._sourceId = null;
         app._client.emit('state', ST);
         return tick();
     }).then(() => {
@@ -1078,7 +1089,7 @@ function runDrawn() {
         gpu.emit('touch', 'up', x0, y0 - 120);
         drawn.pop();
         // a new page with a picture not decoded yet: its first frame waits for it
-        const pic = path.join(__dirname, '..', 'robertn_store@0.9.14', 'rhmiData', 'variantGroups', 'Common', 'images', 'store_icon.png');
+        const pic = path.join(__dirname, '..', 'robertn_store@0.9.15', 'rhmiData', 'variantGroups', 'Common', 'images', 'store_icon.png');
         const extra = Array.from({ length: 30 }, (_, i) => comp({ id: `x${i}`, title: `Extra ${i}`, version: '1.0.0', installed: null, status: 'available' }));
         app._client.emit('state', Object.assign({}, st, { components: st.components.concat(extra, [comp({ id: 'pictured', title: 'Pictured',
             version: '1.0.0', installed: null, status: 'available', icon: pic })]) }));

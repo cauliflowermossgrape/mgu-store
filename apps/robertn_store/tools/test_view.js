@@ -6,7 +6,7 @@
  *   node tools/test_view.js
  */
 const assert = require('assert');
-const { listed, sourceNames, withSources, rowState, rowAction, removable, undoable, groupState, statusLine, sourceLabel, sourceState, sourcesState, sourceActions,
+const { listed, sourceNames, withSources, rowState, rowAction, removable, undoable, groupState, statusLine, statusOf, sourceLabel, sourceState, sourcesState, sourceActions,
     sourceChannel, sourceAccount, tokenLabel, tokenState, tokenSources, accountsState, loginStatus, loginCode, phoneState, phoneAddress,
     parseSource, pickOptions, probeStatus, sourcesMessage, tokenMessage } = require('../src/store_view.js');
 
@@ -92,6 +92,13 @@ const cases = [
     [rowAction(row({ blocked: 'doom is already installed from o/r', uninstallable: true }), null), 'remove'],
     [groupState([row({ blocked: 'doom is already installed from o/r' })], null), ''],
     [statusLine(st({ components: [row({ blocked: 'doom is already installed from o/r' })] }), true, true), 'Up to date, checked 14:02'],
+    // what the status line's error is about: the failed component, the source the check could not read
+    [JSON.stringify(statusOf(st({ components: [row({ error: 'HTTP 404 from api.github.com' })] }), true, true)),
+        '{"text":"DOOM: HTTP 404 from api.github.com","about":{"component":' + JSON.stringify(row({ error: 'HTTP 404 from api.github.com' })) + '}}'],
+    [JSON.stringify(statusOf(st({ catalog: { checkedAt: 0, error: 'o/r: GitHub limit reached. Try later or sign in.' },
+        sources: [{ id: 'a', status: 'ok' }, { id: 'b', status: 'error' }] }), true, true)),
+        '{"text":"Check failed: o/r: GitHub limit reached. Try later or sign in.","about":{"source":{"id":"b","status":"error"}}}'],
+    [JSON.stringify(statusOf(st({}), true, true).about), 'null'],
     [JSON.stringify(withSources([row({ source: 'a' }), row({ source: 'b' }), row({ id: 'x', title: 'X', source: 'a' })],
         [{ id: 'a', label: 'o/apps' }, { id: 'b', label: 'usb:S/mgu-repo/b' }]).map((r) => r.title)), '["DOOM (apps)","DOOM (b)","X"]'],
     [JSON.stringify(withSources([row({ source: 'a' }), row({ source: 'b' }), row({ source: 'c' })],

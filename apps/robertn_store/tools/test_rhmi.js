@@ -21,7 +21,7 @@ let checks = 0;
 const ok = (cond, msg) => { checks += 1; assert(cond, msg); };
 
 const CELLS = {
-    ID7: { LT_Label_1Row: 'Text', LT_Button_1Row: 'Text', LT_Button_1Row_2Col7030_2Text: 'Text1stCol,Text2ndCol' },
+    ID7: { LT_Label_1Row: 'Text', LT_Label_4Row_1TextDyn: 'Text', LT_Button_1Row: 'Text', LT_Button_1Row_2Col7030_2Text: 'Text1stCol,Text2ndCol' },
     ID8: { LT_ScrollLabel: 'Text',
         LT_Button_MediaEntry_1Row: 'PrimaryText,FrequencyText,FrequencyVisible,IconVisible,ProgressVisible,IsPlaying' }
 };
@@ -99,6 +99,10 @@ function checkHmi(hmi, dir) {
                 ok(xc.visible === comp.properties.Visible.value, `${comp.name} Visible matches the XML`);
                 ok(comp.properties.Focusable.value === xc.focusable, `${comp.name} Focusable matches the XML`);
                 ok(comp.rows.length === 1, `${comp.name} has one row`);
+            }
+            // the status line and a source's error wrap over several rows on iDrive 7 (iDrive 8's labels scroll)
+            if (hmi === 'ID7' && (comp.name === 'storeStatus' || comp.name === 'storeSrcError')) {
+                ok(xc.widget === 'LT_Label_4Row_1TextDyn', `${comp.name} wraps (${xc.widget})`);
             }
             if (CELLS[hmi][xc.widget]) {
                 ok(Object.keys(comp.rows[0]).join() === CELLS[hmi][xc.widget], `${hmi} ${comp.name} has the cells of ${xc.widget}`);
