@@ -401,6 +401,10 @@ function repoEntries(doc, listDir) {
                 entries.push(Object.assign({}, pat, { id: name, kind: 'app', path: `${m[1]}${name}`, pattern: true }));
             }
         }), (err) => {
+            // a rate limit says nothing of the folder: the read fails, and the source keeps its listing
+            if (err.rateLimited) {
+                throw err;
+            }
             skipped.push(`apps ${pat.path}: ${err.missing ? 'no such folder' : err.message}`);
         });
     }), Promise.resolve()).then(() => ({ entries, skipped }));
@@ -504,6 +508,9 @@ function repoCatalog(readFile, commit, revision, listDir) {
                     }), rhmi ? { icon: { ref: iconRef, sha256: null, entryPoint: true } } : {})]);
                 })
                 .catch((err) => {
+                    if (err.rateLimited) {
+                        throw err;
+                    }
                     // a folder a pattern matched that is not an app (no manifest) is no component
                     if (!(rc.pattern && err.missing)) {
                         skipped.push(`${rc.id}: ${err.missing ? `${names.map((n) => `${rc.path}/${n}`).join(' or ')} is missing` : err.message}`);

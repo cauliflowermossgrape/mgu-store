@@ -5129,6 +5129,17 @@ function testAnonymous(certs) {
             }
             ok('refs: an answer that is no git ref advertisement is refused', bad === 'not a git ref advertisement', bad);
             u.server.close();
+            // a rate limit on an apps pattern's folders or a component's manifest fails the read (the source keeps its listing)
+            const limited = () => Promise.reject(Object.assign(new Error('GitHub limit reached. Try later or sign in.'), { status: 403, rateLimited: true }));
+            const repoJson = (doc) => (rel) => (rel === 'mgu-repo.json' ? Promise.resolve(Buffer.from(JSON.stringify(doc))) : limited());
+            const pattern = { schema: 1, apps: { path: 'apps/*', build: { node: 'b.js' } } };
+            const listed = { schema: 1, components: [{ id: 'x_tool', kind: 'tool', path: 'x' }] };
+            return Promise.all([sourcesLib.repoCatalog(repoJson(pattern), 'a'.repeat(40), null, limited).then(() => 'listed', (e) => e.message),
+                sourcesLib.repoCatalog(repoJson(listed), 'a'.repeat(40), null, limited).then(() => 'listed', (e) => e.message)]);
+        })
+        .then((why) => {
+            ok('rate limit: a repo tree whose folders or manifests the limit refuses is not listed without them',
+                why.every((w) => w === 'GitHub limit reached. Try later or sign in.'), JSON.stringify(why));
         });
 }
 
