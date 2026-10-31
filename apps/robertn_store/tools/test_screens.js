@@ -235,7 +235,7 @@ eq([f.items.map((i) => i.label).slice(0, -4), f.items[0].act], [['Try again', 'B
     'a failed removal is tried again');
 
 // an error of about 200 characters is drawn in full, in either unit's box: on a component's page above its description,
-// on a source's page; the status line naming one opens that page
+// on a source's page
 const { Recorder } = require(path.join(__dirname, '..', 'src', 'kit_record.js'));
 const LONG = fixture.LONG_ERROR;
 Object.keys(UNITS).forEach((unit) => {
@@ -257,15 +257,7 @@ Object.keys(UNITS).forEach((unit) => {
     eq([text(e, 'note1'), e.items[0].label], ['', 'Try again'], `${unit}: not cut into the panel's notes`);
     e = shown('source-failed');
     ok(e.texts.indexOf(LONG) >= 0, `${unit}: the source's error in full (${e.texts})`);
-    e = shown('store-failed');
-    eq([e.items[4].label, e.items[4].act], [`Vehicle control: ${LONG}`, { do: 'open', page: { name: 'app', id: 'vehicle_control', source: 'mgu-store',
-        listed: 'vehicle_control' } }], `${unit}: the status line opens the failed component's page`);
-    e = shown('store-check-failed');
-    eq([e.items[4].label, e.items[4].act], [`Check failed: IterioDev/car-apps: ${LONG}`, { do: 'open', page: { name: 'source', id: 'car-apps' } }],
-        `${unit}: Check failed opens the source's page`);
-    eq(e.items.slice(5, 8).map((i) => i.label), ['All', 'Apps', 'Tools'], `${unit}: then the filters`);
 });
-eq(screen('store').items[4].label, 'All', 'a status line without an error is not pressed');
 
 // confirm steps: Cancel first
 f = screen('confirm-remove');

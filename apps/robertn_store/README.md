@@ -26,9 +26,7 @@ USB, Settings) beside:
 
 - **Store**: All / Apps / Tools, Online / Offline / Checking, the status line
   (or the running install; an app whose title another listed app has is
-  named with its source, `DOOM (idrive7-apps)`; a press on a failure or
-  `Check failed: …` opens the page of the component or source it names,
-  which shows the error in full), a grid of tiles: the package's picture when the
+  named with its source, `DOOM (idrive7-apps)`), a grid of tiles: the package's picture when the
   updater names one (`components[].icon`, a PNG file), else a letter tile
   (round for a tool), its name, its source under it (the repo's name,
   `owner/repo` where two sources share a repo name, a catalog's host), its state (`Installed`, `Update 1.0.1`, `Downloading
@@ -240,8 +238,8 @@ confirmed with OK, trimmed, is:
   the status line says `Checking <repo>` while the updater is asked what the
   repo has (`source-probe`); then the repo's page (below) opens, or a repo
   with only one choice is added on it, one with none without a channel, or
-  the status line says why not (`Add source failed: Offline`, `GitHub rate
-  limit reached`, `… is already a source`, `the updater did not answer`
+  the status line says why not (`Add source failed: Offline`, `GitHub limit
+  reached. Try later or sign in.`, `… is already a source`, `the updater did not answer`
   after 30 s, `updater not running` when it goes away). With an updater before 0.7.0 the repo is added without a
   channel.
 - any other `https://host/path` address (the scheme in any case), a

@@ -138,9 +138,7 @@ function screens() {
             focus: 0 }],
         ['prefer', { tab: 'settings', stack: main.concat([{ name: 'wifi' }, { name: 'prefer' }]) }],
         ['offline', { tab: 'store', stack: main, connected: false, st: null, secret: false }],
-        // an error of about 200 characters: on the status line (a press opens its page), a component's page, a source's page
-        ['store-failed', { tab: 'store', stack: main }, failedSt(st, 'vehicle_control', { error: LONG_ERROR })],
-        ['store-check-failed', { tab: 'store', stack: main }, Object.assign(failedSt(st, 'vehicle_control', { error: null }), sourceFailed(st))],
+        // an error of about 200 characters: on a component's page, a source's page
         ['app-failed', { stack: main.concat([{ name: 'app', id: 'vehicle_control' }]) }, failedSt(st, 'vehicle_control', { error: LONG_ERROR })],
         ['source-failed', { tab: 'settings', stack: main.concat([{ name: 'source', id: 'car-apps' }]) }, sourceFailed(st)]
     ];

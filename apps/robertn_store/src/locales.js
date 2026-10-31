@@ -64,7 +64,7 @@ module.exports = [
    "For {0}": "适用于 {0}",
    "Forget": "忘记",
    "Forget network?": "忘记此网络？",
-   "GitHub rate limit reached": "已达到 GitHub 请求频率上限",
+   "GitHub limit reached. Try later or sign in.": "已达到 GitHub 请求上限，请稍后再试或登录。",
    "GitHub token": "GitHub 令牌",
    "Good": "良好",
    "In use": "使用中",

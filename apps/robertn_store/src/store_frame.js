@@ -92,12 +92,6 @@ function itemsOf(st, page) {
                 const round = o.style === 'round';
                 items.push({ x: b.x, y: b.y, w: b.w, h: b.h, r: round ? b.w / 2 : Math.min(18, b.h / 2), label: o.text || 'Back', act: o.act });
             }
-        } else if (c.gpu === 'text') {
-            // a text with a press (the status line's error): its line, as wide as its words
-            if (o.act && o.text) {
-                const w = Math.min(b.w, measure.textWidth(o.text, o.size, { font: o.font }));
-                items.push({ x: b.x, y: b.y, w, h: b.h, r: 8, label: o.text, act: o.act });
-            }
         } else if (c.gpu === 'tabs') {
             const t = tabCells(b, o);
             String(o.items).split(',').forEach((label, i) => items.push({ x: b.x + i * (t.cw + t.gap), y: b.y, w: t.cw, h: b.h, r: 14,

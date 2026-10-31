@@ -147,43 +147,34 @@ function groupState(rows, busy) {
  * since this Store was installed (it left its secret here: secret true) or
  * not yet, which after the first install over SSH is until the next start. */
 function statusLine(st, connected, secret) {
-    return statusOf(st, connected, secret).text;
-}
-
-/* The status line's text and what its error is about: { component } that
- * failed, or { source } that could not be read (about null otherwise). */
-function statusOf(st, connected, secret) {
-    const line = (text, about) => ({ text, about: about || null });
     if (!connected) {
-        return line(secret ? tr("Updater not running") : tr("Restart the head unit to finish setup"));
+        return secret ? tr("Updater not running") : tr("Restart the head unit to finish setup");
     }
     if (st.rebooting) {
-        return line(tr("Restarting"));
+        return tr("Restarting");
     }
     if (st.privacy && st.privacy !== 'patched') {
-        return line(tr("App privacy patch not in effect"));
+        return tr("App privacy patch not in effect");
     }
     const failed = st.components.find((c) => c.error && listed(c));
     if (failed && !st.busy) {
-        return line(`${failed.title}: ${failed.error}`, { component: failed });
+        return `${failed.title}: ${failed.error}`;
     }
     if (st.rebootError && !st.busy) {
-        return line(tr("Restart failed: {0}", st.rebootError));
+        return tr("Restart failed: {0}", st.rebootError);
     }
     if (st.catalog.checking) {
-        return line(tr("Checking for updates"));
+        return tr("Checking for updates");
     }
     const checked = st.catalog.checkedAt ? tr("checked {0}", clock(st.catalog.checkedAt)) : tr("not checked yet");
     if (!st.online) {
-        return line(tr("Offline, {0}", checked));
+        return tr("Offline, {0}", checked);
     }
     if (st.catalog.error) {
-        // the updater names the first source it could not read
-        const bad = (st.sources || []).find((s) => s.status === 'error' || s.status === 'auth-needed');
-        return line(tr("Check failed: {0}", st.catalog.error), bad && { source: bad });
+        return tr("Check failed: {0}", st.catalog.error);
     }
     const updates = st.components.filter((c) => c.status === 'update' && !notForUnit(c) && !c.blocked && !startPending(c)).length;
-    return line(`${updates ? (updates > 1 ? tr('{0} updates', updates) : tr('{0} update', updates)) : tr("Up to date")}, ${checked}`);
+    return `${updates ? (updates > 1 ? tr('{0} updates', updates) : tr('{0} update', updates)) : tr("Up to date")}, ${checked}`;
 }
 
 /* ---- sources ---- */
@@ -369,7 +360,7 @@ function probeStatus(probe) {
     case 'ok': return '';
     case 'auth-needed': return tr("Not found or private");
     case 'offline': return tr("Offline");
-    case 'rate-limited': return tr("GitHub rate limit reached");
+    case 'rate-limited': return tr("GitHub limit reached. Try later or sign in.");
     default: return probe.error ? String(probe.error) : tr("Failed");
     }
 }
@@ -396,6 +387,6 @@ function sourcesMessage(m) {
     }
 }
 
-module.exports = { listed, startPending, sourceNames, withSources, removable, undoable, hmiNames, notForUnit, parseSource, pickOptions, probeStatus, sourcesMessage, tokenMessage, PHASE, percent, rowState, rowAction, groupState, statusLine, statusOf, sourceLabel, sourceState,
+module.exports = { listed, startPending, sourceNames, withSources, removable, undoable, hmiNames, notForUnit, parseSource, pickOptions, probeStatus, sourcesMessage, tokenMessage, PHASE, percent, rowState, rowAction, groupState, statusLine, sourceLabel, sourceState,
     sourcesState, sourceActions, sourceChannel, sourceAccount, tokenLabel, tokenState, tokenSources, accountsState, loginStatus, loginCode,
     phoneState, phoneAddress };
