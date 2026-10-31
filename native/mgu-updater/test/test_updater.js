@@ -366,7 +366,21 @@ function ghApi(req, res, auth) {
             return;
         }
         const tree = repo.trees[u.searchParams.get('ref')];
-        const f = tree && tree[decodeURIComponent(rest.slice('/contents/'.length))];
+        const rel = decodeURIComponent(rest.slice('/contents/'.length));
+        const f = tree && tree[rel];
+        // a folder: its entries, as GitHub lists them
+        const names = tree && !f ? Object.keys(tree).filter((k) => k.indexOf(`${rel}/`) === 0).map((k) => k.slice(rel.length + 1)) : [];
+        if (names.length) {
+            const items = [];
+            names.forEach((n) => {
+                const name = n.split('/')[0];
+                if (!items.some((i) => i.name === name)) {
+                    items.push({ name, type: n.indexOf('/') >= 0 ? 'dir' : 'file' });
+                }
+            });
+            send(200, items);
+            return;
+        }
         // the raw media type gets the bytes; anything else the JSON object around them, as GitHub does
         const rawWanted = /^application\/vnd\.github(\.v3)?\.raw/.test(req.headers.accept || '');
         send(f ? 200 : 404, !f ? { message: 'Not Found' } : rawWanted ? f[0] : { type: 'file', encoding: 'base64', content: f[0].toString('base64') });
@@ -5143,6 +5157,110 @@ function testAnonymous(certs) {
         });
 }
 
+/* The shipped default sources (updater.conf) on an iDrive 7 unit: a copy of
+ * IterioDev/car-apps the owner added by hand keeps it from being added
+ * again; on a unit without one it is added on its tags channel, read at the
+ * newest x.y.z tag without a token (the apps pattern's folders the one API
+ * request, for a new tag only), and its apps and tools for iDrive 8 only are
+ * not for this unit: none is installed. */
+function testCarApps(certs) {
+    const { Updater, loadConf } = require('../js/updater');
+    process.env.MGU_UPDATER_CONF = path.join(T, 'no-local.conf');
+    const shipped = loadConf().default_sources;
+    delete process.env.MGU_UPDATER_CONF;
+    const M = path.join(T, 'car-apps');
+    const opt = path.join(M, 'opt');
+    const oap = path.join(M, 'oap');
+    const store = path.join(M, 'store');
+    [M, opt, oap, store, path.join(M, 'shm'), path.join(M, 'media')].forEach(mkdirp);
+    const deployLog = path.join(M, 'deploy.log');
+    fs.writeFileSync(deployLog, '');
+    Object.assign(process.env, { TOOL_ROOT: opt, OAP_ROOT: oap, FAKE_DEPLOY_LOG: deployLog });
+    delete process.env.FAKE_UNIT_HMI;
+    delete process.env.FAKE_LEASE;
+    delete process.env.FAKE_PENDING;
+    const deploySh = path.join(M, 'mgu-deploy.sh');
+    fs.writeFileSync(deploySh, DEPLOY_SH, { mode: 0o755 });
+    fs.writeFileSync(path.join(M, 'lease.json'), JSON.stringify({ interface: 'vethuplink', dns: [`127.0.0.1:${DNS_PORT}`] }));
+    fs.writeFileSync(path.join(M, 'ca.pem'), certs.ca);
+    publish(store, [], { schema: 2 });
+    // a repo laid out as car-apps: an apps pattern of prebuilt packages and a tool, these for iDrive 8 only
+    const tree = (version) => ({
+        'mgu-repo.json': JSON.stringify({ schema: 1, apps: { path: 'apps/*', build: { node: 'tools/prebuilt.js', output: '{dir}/{id}@{version}.tgz' },
+            mguHmi: ['ID8'], uninstallable: true }, tools: [{ id: 'iteriodev-tailscale', path: 'tools/iteriodev-tailscale' }] }),
+        'apps/iteriodev_draggy/app.json': JSON.stringify({ id: 'iteriodev_draggy', version, title: 'Drag Timer' }),
+        'tools/prebuilt.js': 'process.exit(0);\n',
+        'tools/iteriodev-tailscale/component.json': JSON.stringify({ id: 'iteriodev-tailscale', kind: 'tool', version: '1.104.5', title: 'Tailscale',
+            mguHmi: ['ID8'], optional: true, uninstallable: true, files: [] })
+    });
+    ghRepo('IterioDev/car-apps');
+    gh.repos['IterioDev/car-apps'].branches = { main: ghCommit('IterioDev/car-apps', tree('1.0.2')) };
+    gh.repos['IterioDev/car-apps'].tags = [{ name: '1.1.0', sha: ghCommit('IterioDev/car-apps', tree('1.0.0')) },
+        { name: '1.1.1', sha: ghCommit('IterioDev/car-apps', tree('1.0.1')) }];
+    ['cauliflowermossgrape/idrive7-apps', 'robertnisipeanu/idrive-apps'].forEach((r) => {
+        if (!gh.repos[r]) {
+            ghRepo(r, { catalog: Buffer.from(JSON.stringify({ schema: 2, commit: 'test', components: [] })) });
+        }
+    });
+    const sources = path.join(M, 'sources.json');
+    const conf = {
+        sources, credentials_dir: path.join(M, 'cred'), state_dir: path.join(M, 'state'), tool_root: opt, oap_root: oap, mainapp_uid: '12201',
+        store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
+        build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
+        mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
+        socket: path.join(M, 'shm', 'updater.sock'), socket_group: 'staff', deploy_tool: 'mgu-deploy', uplink_tool: 'mgu-uplink',
+        bootstrap_check_s: '6', privacy_tool: '', reboot: '', default_sources: shipped
+    };
+    fs.writeFileSync(conf.mounts, '');
+    const builtin = { id: 'mgu-store', type: 'file', path: store, builtin: true };
+    // a unit whose owner added the repo by hand, on its branch, the name in other case; and IterioDev's
+    // App Manager's index adopted as an https source named car-apps
+    const hand = { id: 's-c4a1', type: 'github', repo: 'iteriodev/CAR-APPS', channel: 'branch' };
+    const index = { id: 'car-apps', type: 'https', url: `https://updates.test:${HTTPS_PORT}/gone-index.json` };
+    fs.writeFileSync(sources, JSON.stringify({ schema: 1, sources: [builtin, hand, index] }));
+    let u = new Updater(conf);
+    const kept = u.stored.filter((d) => d.type === 'github' && d.repo.toLowerCase() === 'iteriodev/car-apps');
+    ok('car-apps: a default source, not doubled where the owner added it by hand', /(^| )IterioDev\/car-apps:tags( |$)/.test(shipped) &&
+        kept.length === 1 && kept[0].id === 's-c4a1' && kept[0].channel === 'branch', JSON.stringify(u.stored));
+    // a unit without it: added on its tags channel, beside the App Manager's index named car-apps
+    fs.writeFileSync(sources, JSON.stringify({ schema: 1, sources: [builtin, index] }));
+    fs.unlinkSync(path.join(M, 'state', 'default-sources.json'));
+    u = new Updater(conf);
+    const def = u.stored.find((d) => d.type === 'github' && d.repo === 'IterioDev/car-apps') || {};
+    ok('car-apps: added on its tags channel, beside the index source named car-apps, under a free id', def.channel === 'tags' &&
+        /^s-[0-9a-f]{4}$/.test(def.id) && u.stored.some((d) => d.id === 'car-apps' && d.type === 'https'), JSON.stringify(u.stored));
+    const st = () => u.state();
+    const comp = (id) => st().components.find((c) => c.id === id) || {};
+    const apiOf = (mark) => seen.slice(mark).filter((x) => /^api\.github\.com/.test(x.host) && x.url.indexOf('/repos/IterioDev/car-apps') === 0);
+    let mark = seen.length;
+    let first;
+    return u.serve()
+        .then(() => u.check())
+        .then(() => {
+            first = apiOf(mark);
+            const rt = u.src.get(def.id);
+            ok('car-apps: read at its newest x.y.z tag without a token, its apps folder the one API request', rt.status === 'ok' &&
+                comp('iteriodev_draggy').version === '1.0.1' && comp('iteriodev-tailscale').version === '1.104.5' &&
+                first.length === 1 && /\/contents\/apps\?ref=/.test(first[0].url), JSON.stringify([rt.status, rt.error, first.map((x) => x.url)]));
+            mark = seen.length;
+            return u.check();
+        })
+        .then(() => {
+            ok('car-apps: a check of the same tag makes no API request', apiOf(mark).length === 0, JSON.stringify(apiOf(mark).map((x) => x.url)));
+            ok('car-apps: on iDrive 7 its apps and tools for iDrive 8 only are not for this head unit', st().unit && st().unit.hmi === 'ID7' &&
+                comp('iteriodev_draggy').compat === 'no' && comp('iteriodev-tailscale').compat === 'no', JSON.stringify([st().unit, comp('iteriodev_draggy')]));
+            return Promise.all([ask(conf.socket, { op: 'install', id: 'iteriodev_draggy' }), ask(conf.socket, { op: 'install', id: 'iteriodev-tailscale' })]);
+        })
+        .then((errs) => until(st, () => !st().busy, 30000, 'idle').then(() => errs))
+        .then((errs) => {
+            ok('car-apps: an install of one is refused, nothing installed', errs.every((e) => /is for iDrive 8; this head unit is iDrive 7/.test(e || '')) &&
+                fs.readFileSync(deployLog, 'utf8').split('\n').filter((l) => /^install/.test(l)).length === 0, JSON.stringify(errs));
+            u.server.close();
+        });
+}
+
 /* ---- run ---------------------------------------------------------------------- */
 
 function main() {
@@ -5174,6 +5292,7 @@ function main() {
             .then(() => testIdClash().catch((e) => ok('id clash scenario', false, e.stack)))
             .then(() => testDefaultPrivate(certs).catch((e) => ok('default private source scenario', false, e.stack)))
             .then(() => testAnonymous(certs).catch((e) => ok('anonymous GitHub scenario', false, e.stack)))
+            .then(() => testCarApps(certs).catch((e) => ok('car-apps default source scenario', false, e.stack)))
             .then(() => testDaemon(certs, pubDir))
             .then(() => {
                 dnsSrv.close();

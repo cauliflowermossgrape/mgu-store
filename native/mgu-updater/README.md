@@ -63,7 +63,7 @@ them:
   always there and not removable.
 - **Default sources** (`default_sources`: `<owner>/<repo>[:<channel>]`
   separated by spaces; `cauliflowermossgrape/idrive7-apps:branch
-  robertnisipeanu/idrive-apps:releases`): each is
+  robertnisipeanu/idrive-apps:releases IterioDev/car-apps:tags`): each is
   added once, at the first start of an updater that names it, unless a
   source of that repo is there already (the installers seed it too,
   `deploy/sources.json`). `state/default-sources.json` (`{"added":
@@ -451,8 +451,9 @@ that has no origin yet gets one, once per record (`state/appmanager.json`):
 - the repository it recorded for the app, else its default repository
   when that listed the app (as the App Manager itself did); a public one's
   index is read by the https source of that URL, added as a source named
-  after the repository (`car-apps`) when none is, and that source is the
-  app's origin;
+  after the repository (`car-apps`, or a free id where the default
+  source of IterioDev/car-apps has that one) when none is, and that
+  source is the app's origin;
 - else (a stick's package, a private repository, whose token stays in its
   folder) `imported`: no origin, so the source listing it updates it
   ("Ids"). One no source lists keeps a row of source
