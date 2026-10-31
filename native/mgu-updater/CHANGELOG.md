@@ -2,7 +2,7 @@
 
 ## 0.8.11
 
-- Default source: IterioDev/car-apps on its tags channel (the newest x.y.z tag, as its README asks), added once at the first start of this version (and seeded by the installers, `deploy/sources.json`), unless a source of that repo is there already. A unit is offered only what names its head unit in `mguHmi`; an install of one that does not is refused. Like any source it can be removed; once removed it is not added again.
+- Default source: IterioDev/car-apps on its tags channel (the newest x.y.z tag, as its README asks), added once at the first start of this version (and seeded by the installers, `deploy/sources.json`), unless a source of that repo is there already. A component whose `mguHmi` names only other head units is not offered, and its install is refused. Like any source it can be removed; once removed it is not added again.
 
 ## 0.8.10
 

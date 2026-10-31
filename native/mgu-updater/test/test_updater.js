@@ -5161,8 +5161,8 @@ function testAnonymous(certs) {
  * IterioDev/car-apps the owner added by hand keeps it from being added
  * again; on a unit without one it is added on its tags channel, read at the
  * newest x.y.z tag without a token (the apps pattern's folders the one API
- * request, for a new tag only), and its iDrive 8 apps and tools are not for
- * this unit: none is installed. */
+ * request, for a new tag only), and its apps and tools for iDrive 8 only are
+ * not for this unit: none is installed. */
 function testCarApps(certs) {
     const { Updater, loadConf } = require('../js/updater');
     process.env.MGU_UPDATER_CONF = path.join(T, 'no-local.conf');
@@ -5249,7 +5249,7 @@ function testCarApps(certs) {
         })
         .then(() => {
             ok('car-apps: a check of the same tag makes no API request', apiOf(mark).length === 0, JSON.stringify(apiOf(mark).map((x) => x.url)));
-            ok('car-apps: on iDrive 7 its apps and tools are not for this head unit', st().unit && st().unit.hmi === 'ID7' &&
+            ok('car-apps: on iDrive 7 its apps and tools for iDrive 8 only are not for this head unit', st().unit && st().unit.hmi === 'ID7' &&
                 comp('iteriodev_draggy').compat === 'no' && comp('iteriodev-tailscale').compat === 'no', JSON.stringify([st().unit, comp('iteriodev_draggy')]));
             return Promise.all([ask(conf.socket, { op: 'install', id: 'iteriodev_draggy' }), ask(conf.socket, { op: 'install', id: 'iteriodev-tailscale' })]);
         })
