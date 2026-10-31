@@ -310,7 +310,8 @@ function appView(m, page) {
             c.listedId && !c.blocked && (c.installAs || c.id) !== c.listedId && { text: `Id ${c.installAs || c.id}` },
             { text: isTool(c) ? tr("Tool") : tr("App"), color: isTool(c) ? TEAL : BLUE }, c.mguHmi && c.mguHmi.length && { text: hmiNames(c.mguHmi) },
             c.provides && { text: c.provides }].filter(Boolean) },
-        desc: { text: c.description || '' },
+        // a failure in full, above the description
+        desc: { text: c.description || '', lead: c.error && !mine ? tr("Failed: {0}", c.error) : '', leadColor: RED },
         // what an installed tool says is wrong (the updater's problem: mgu-render's page template)
         problem: { text: c.problem || '' },
         instLabel: { text: tr("Installed") },
@@ -327,9 +328,6 @@ function appView(m, page) {
     }
     if (c.blocked) {
         notes.push([c.blocked, AMBER]);
-    }
-    if (c.error && !mine) {
-        notes.push([tr("Failed: {0}", c.error), RED]);
     }
     if (c.pendingReboot) {
         notes.push([tr("Restart pending"), AMBER]);

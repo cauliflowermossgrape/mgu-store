@@ -8,7 +8,7 @@
         </layoutGroup>
         <layoutGroup id="103" name="List">
             <property id="3" value="1"/>
-            <component id="20" type="label" widget="LT_Label_1Row">
+            <component id="20" type="label" widget="LT_Label_4Row_1TextDyn">
                 <property id="2" value="1"/>
                 <property id="3" value="0"/>
             </component>
@@ -147,7 +147,7 @@
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
             </component>
-            <component id="89" type="label" widget="LT_Label_1Row">
+            <component id="89" type="label" widget="LT_Label_4Row_1TextDyn">
                 <property id="2" value="1"/>
                 <property id="3" value="0"/>
             </component>

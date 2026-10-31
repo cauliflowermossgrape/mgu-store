@@ -275,7 +275,7 @@ const cases = [
     [probeStatus({ status: 'ok', releases: false, tags: false, branches: [] }), ''],
     [probeStatus({ status: 'auth-needed' }), 'Not found or private'],
     [probeStatus({ status: 'offline' }), 'Offline'],
-    [probeStatus({ status: 'rate-limited' }), 'GitHub rate limit reached'],
+    [probeStatus({ status: 'rate-limited' }), 'GitHub limit reached. Try later or sign in.'],
     [probeStatus({ status: 'error', error: 'HTTP 500 from api.github.com' }), 'HTTP 500 from api.github.com'],
     [sourcesMessage({ kind: 'checking', repo: 'o/r' }), 'Checking o/r']
 ];

@@ -360,7 +360,7 @@ function probeStatus(probe) {
     case 'ok': return '';
     case 'auth-needed': return tr("Not found or private");
     case 'offline': return tr("Offline");
-    case 'rate-limited': return tr("GitHub rate limit reached");
+    case 'rate-limited': return tr("GitHub limit reached. Try later or sign in.");
     default: return probe.error ? String(probe.error) : tr("Failed");
     }
 }

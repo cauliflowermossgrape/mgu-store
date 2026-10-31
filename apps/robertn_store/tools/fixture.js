@@ -12,6 +12,10 @@ const comp = (o) => Object.assign({ kind: 'app', installed: null, size: null, st
     build: null, optional: false, uninstallable: true, revision: null, mguHmi: ['ID7', 'ID8'], compat: 'yes', provides: null,
     service: null, pendingReboot: false, queued: false, error: null }, o);
 
+/* An updater error of about 200 characters. */
+const LONG_ERROR = 'the build failed (exit 1): no oap-sdk donor among the installed apps carries OnlineApp.js, ' +
+    'so robertn_doom@1.0.1 cannot be linked; install any stock app again, or another app that ships the SDK';
+
 function state() {
     return {
         type: 'state', updater: { version: '0.4.0' }, online: true, privacy: 'patched',
@@ -133,8 +137,22 @@ function screens() {
         ['confirm-wifi-forget', { tab: 'settings', stack: main.concat([{ name: 'wifi' }, { name: 'confirm', kind: 'wifi-forget', ssid: 'Home' }]),
             focus: 0 }],
         ['prefer', { tab: 'settings', stack: main.concat([{ name: 'wifi' }, { name: 'prefer' }]) }],
-        ['offline', { tab: 'store', stack: main, connected: false, st: null, secret: false }]
+        ['offline', { tab: 'store', stack: main, connected: false, st: null, secret: false }],
+        // an error of about 200 characters: on a component's page, a source's page
+        ['app-failed', { stack: main.concat([{ name: 'app', id: 'vehicle_control' }]) }, failedSt(st, 'vehicle_control', { error: LONG_ERROR })],
+        ['source-failed', { tab: 'settings', stack: main.concat([{ name: 'source', id: 'car-apps' }]) }, sourceFailed(st)]
     ];
+}
+
+/* State overrides: nothing installing, component id with o over it. */
+function failedSt(st, id, o) {
+    return { busy: null, components: st.components.map((c) => (c.id === id ? Object.assign({}, c, o) : c)) };
+}
+
+/* State overrides: IterioDev/car-apps could not be read, and the check failed on it. */
+function sourceFailed(st) {
+    return { catalog: Object.assign({}, st.catalog, { error: `IterioDev/car-apps: ${LONG_ERROR}` }),
+        sources: st.sources.map((s) => (s.id === 'car-apps' ? Object.assign({}, s, { status: 'error', error: LONG_ERROR }) : s)) };
 }
 
 /* State overrides: the uplink's Wi-Fi with w over it. */
@@ -149,4 +167,4 @@ function model(over, stOver) {
         login: { waiting: false, refusal: null }, webText: '', accountsNote: { text: '', error: false } }, over);
 }
 
-module.exports = { state, screens, model };
+module.exports = { state, screens, model, LONG_ERROR };

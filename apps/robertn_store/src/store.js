@@ -1382,7 +1382,7 @@ class Store extends OnlineApp {
             .catch((err) => logger.warn(`visibility ${name} failed: ${err && err.message}`));
     }
 
-    /* A one-line label: shown with its text, hidden when there is none. */
+    /* A label: shown with its text, hidden when there is none. */
     _text(name, text) {
         if (text) {
             this._set(name, 'Text', text, 'Text');

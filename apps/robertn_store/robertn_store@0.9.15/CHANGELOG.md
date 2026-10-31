@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.15
+
+An error shows in full. A component's page has its failure above the
+description, wrapped over as many lines as it takes. On iDrive 7's widget
+screens the status line and a source's error wrap over up to four rows.
+GitHub's rate limit reads `GitHub limit reached. Try later or sign in.`
+
 ## 0.9.14
 
 Undo update on the page of an app or tool the updater can take back to its

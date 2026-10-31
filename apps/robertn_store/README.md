@@ -1,4 +1,4 @@
-# robertn_store 0.9.14
+# robertn_store 0.9.15
 
 The Store: every app and head-unit tool of every source, each with its
 state, the progress of the running install, the sources, the phone page
@@ -41,7 +41,7 @@ USB, Settings) beside:
   Available; the running phase (Downloading, Verifying, Building,
   Installing, Removing) with its progress; `Not installable` and why (a package of an id another source's app
   holds; installed, it shows as installed, with Remove and no update), `Not for this head unit` / `For
-  iDrive 8` (that version is not offered), the failure, what an installed tool says is wrong (the updater's `problem`: `In-page drawing unavailable: <reason>` from the renderer), `Restart pending`; and what can be done:
+  iDrive 8` (that version is not offered), the failure in full (above the description), what an installed tool says is wrong (the updater's `problem`: `In-page drawing unavailable: <reason>` from the renderer), `Restart pending`; and what can be done:
   Install, Update to, Try again, Restart head unit, Undo update (where the updater offers the version before; a confirm step), Remove (a confirm step). A second renderer
   installs beside the first. On iDrive 8 an app install or removal is
   queued for the next start: its row shows `Restart pending`, as a tool
@@ -163,7 +163,9 @@ each showing its running install, `Failed` or its number of updates,
 (`On` / `Off`), and **Restart head unit**. Apps and Head-unit tools each
 open their own list of the rows above, one row per component the updater
 lists. Opening the Store also asks for a check. Sources and Phone access
-are hidden with an updater that reports no `sources` or `web`.
+are hidden with an updater that reports no `sources` or `web`. The status
+line, like a source's error on its page, wraps over up to four rows on
+iDrive 7 (`LT_Label_4Row_1TextDyn`).
 
 **Remove?** names the component (`DOOM 1.0.1`) and has **Cancel** and
 **Remove**, which asks the updater to uninstall it.
@@ -185,7 +187,7 @@ login), else its status: `OK`, `USB` (a source on a plugged-in USB stick),
 **Add source**, **Accounts** and **Phone access** (the phone page, for
 pasting tokens and for logs). A source's page shows its label and status,
 **Channel** (`Releases`, `Branch <name>`, `Tags`), **Account** (the GitHub
-login that reads it), **Components** (how many it lists), its error and
+login that reads it), **Components** (how many it lists), its error in full and
 **Remove** (with a confirm step, *Remove source?*; not for the Store's own
 source or a USB source).
 
@@ -236,8 +238,8 @@ confirmed with OK, trimmed, is:
   the status line says `Checking <repo>` while the updater is asked what the
   repo has (`source-probe`); then the repo's page (below) opens, or a repo
   with only one choice is added on it, one with none without a channel, or
-  the status line says why not (`Add source failed: Offline`, `GitHub rate
-  limit reached`, `… is already a source`, `the updater did not answer`
+  the status line says why not (`Add source failed: Offline`, `GitHub limit
+  reached. Try later or sign in.`, `… is already a source`, `the updater did not answer`
   after 30 s, `updater not running` when it goes away). With an updater before 0.7.0 the repo is added without a
   channel.
 - any other `https://host/path` address (the scheme in any case), a
@@ -363,15 +365,15 @@ tools/test_i18n.js         every language: its words, placeholders, RHMI text fi
 tools/shots.js             screenshots of the drawn screens through mgu-render --replay
 tools/test_drag.js         a drag frame against the frame built whole, through mgu-render --replay
 tools/make_icon.py         the 140x140 tile icon
-robertn_store@0.9.14/       staged package tree (no javascript/: the build writes it)
+robertn_store@0.9.15/       staged package tree (no javascript/: the build writes it)
 ```
 
 ## Build
 
 ```sh
 cd apps/robertn_store
-node tools/build.js                                # robertn_store@0.9.14.src.tgz
-node tools/build.js --sdk <donor .tgz|.js>         # and robertn_store@0.9.14.tgz (MGU_SDK_DONOR)
+node tools/build.js                                # robertn_store@0.9.15.src.tgz
+node tools/build.js --sdk <donor .tgz|.js>         # and robertn_store@0.9.15.tgz (MGU_SDK_DONOR)
 node tools/test_view.js && node tools/test_rhmi.js && node tools/test_qr.js && node tools/test_speller.js &&
     node tools/test_screens.js && node tools/test_store.js && STORE_HMI=ID8 node tools/test_store.js &&
     node tools/test_i18n.js
