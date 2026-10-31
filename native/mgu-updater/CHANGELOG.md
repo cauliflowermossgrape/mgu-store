@@ -1,5 +1,9 @@
 # Updater changelog
 
+## 0.8.11
+
+- Default source: IterioDev/car-apps on its tags channel (the newest x.y.z tag, as its README asks), added once at the first start of this version (and seeded by the installers, `deploy/sources.json`), unless a source of that repo is there already. Its apps and tools are for iDrive 8 (`mguHmi`): on iDrive 7 none is offered, and an install is refused. Like any source it can be removed; once removed it is not added again.
+
 ## 0.8.10
 
 - A public GitHub repo read without a token makes no GitHub API request in a check or an install (README.md, "GitHub without a token"): a catalog release's `catalog.json` comes from `github.com`'s release download (asked for again with its ETag, which goes along the redirect to the asset storage), a branch's or tag's commit and the default branch from the refs `github.com` advertises to git, files from `raw.githubusercontent.com`, a commit's tarball from `codeload.github.com`, and an artifact from the release download its catalog names. The API remains for an `apps` pattern's folders (once per new commit), a repo without a `catalog` release on the releases channel, adding a source, and a repo those hosts do not reach. New keys `github_raw` and `github_codeload`.
