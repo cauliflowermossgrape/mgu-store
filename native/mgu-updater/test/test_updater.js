@@ -5184,7 +5184,7 @@ function testCarApps(certs) {
     fs.writeFileSync(path.join(M, 'lease.json'), JSON.stringify({ interface: 'vethuplink', dns: [`127.0.0.1:${DNS_PORT}`] }));
     fs.writeFileSync(path.join(M, 'ca.pem'), certs.ca);
     publish(store, [], { schema: 2 });
-    // the repo as published: an apps pattern of prebuilt packages and a tool, all for iDrive 8
+    // a repo laid out as car-apps: an apps pattern of prebuilt packages and a tool, these for iDrive 8 only
     const tree = (version) => ({
         'mgu-repo.json': JSON.stringify({ schema: 1, apps: { path: 'apps/*', build: { node: 'tools/prebuilt.js', output: '{dir}/{id}@{version}.tgz' },
             mguHmi: ['ID8'], uninstallable: true }, tools: [{ id: 'iteriodev-tailscale', path: 'tools/iteriodev-tailscale' }] }),
