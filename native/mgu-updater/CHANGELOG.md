@@ -2,10 +2,11 @@
 
 ## 0.8.10
 
-- A public GitHub repo read without a token makes no GitHub API request in a check or an install (README.md, "GitHub without a token"): a catalog release's `catalog.json` comes from `github.com`'s release download (asked for again with its ETag, which goes along the redirect to the asset storage), a branch's or tag's commit and the default branch from the refs `github.com` advertises to git, files from `raw.githubusercontent.com`, a commit's tarball from `codeload.github.com`, and an artifact from the release download its catalog names. The API remains for an `apps` pattern's folders (once per new commit), a releases layout's listing, and a repo those hosts do not reach. New keys `github_raw` and `github_codeload`.
+- A public GitHub repo read without a token makes no GitHub API request in a check or an install (README.md, "GitHub without a token"): a catalog release's `catalog.json` comes from `github.com`'s release download (asked for again with its ETag, which goes along the redirect to the asset storage), a branch's or tag's commit and the default branch from the refs `github.com` advertises to git, files from `raw.githubusercontent.com`, a commit's tarball from `codeload.github.com`, and an artifact from the release download its catalog names. The API remains for an `apps` pattern's folders (once per new commit), a repo without a `catalog` release on the releases channel, adding a source, and a repo those hosts do not reach. New keys `github_raw` and `github_codeload`.
 - A request GitHub's rate limit refuses, in a check or a download, fails with `GitHub limit reached. Try later or sign in.`
 - A token GitHub refuses for a repo (a 401, or a 403 that is no rate limit, as a GitHub App's sign-in gets from a repo the App is not installed on) anywhere in a read leaves the repo to the next token, else none; an artifact, icon or tarball download refused that way is downloaded again without the token.
-- Each check's log line ends with the GitHub API requests it made, an install's `verify` line with its download's.
+- Each check's log line ends with the GitHub API requests it made.
+- The phone page's add form says `GitHub limit reached. Try later or sign in.` for a rate-limited repo.
 
 ## 0.8.9
 

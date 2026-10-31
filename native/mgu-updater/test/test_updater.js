@@ -5057,8 +5057,7 @@ function testAnonymous(certs) {
             ok('anonymous: the branch channel follows the default branch HEAD names; files from raw.githubusercontent.com',
                 rt('tree').channel === 'branch:trunk' && comp('tree_tool').version === '1.0.0' &&
                 webOf('anon/tree', mark).some((x) => /^raw\./.test(x.host) && /\/t\/component\.json$/.test(x.url)), rt('tree').channel);
-            ok('anonymous: tags pick the highest x.y.z tag, an annotated one at its peeled commit', comp('tree_tool@tagged').version === '1.1.0' ||
-                rt('tagged').components[0].version === '1.1.0', JSON.stringify(rt('tagged').components.map((c) => c.version)));
+            ok('anonymous: tags pick the highest x.y.z tag, an annotated one at its peeled commit', rt('tagged').components[0].version === '1.1.0', JSON.stringify(rt('tagged').components.map((c) => c.version)));
             ok('anonymous: each check logs its GitHub API requests', ['cat', 'tree', 'tagged'].every((id) =>
                 logged.some((l) => l.indexOf(`source ${id} `) === 0 && /; 0 GitHub API requests$/.test(l))), logged.filter((l) => /^source /.test(l)).join('\n'));
             ok('fallback: a releases layout (no catalog release) is listed through the API, its packages from github.com',

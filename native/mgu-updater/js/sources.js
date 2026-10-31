@@ -892,10 +892,16 @@ function ua(version) {
     return { 'User-Agent': `mgu-updater/${version}` };
 }
 
-/* A repo's answer that another token (or none) may get past: 401, 404, or a
- * 403 that is no rate limit (an organisation's SSO, a permission). */
+/* GitHub refusing a token: 401, or a 403 that is no rate limit (an
+ * organisation's SSO, a permission, a GitHub App not installed there). */
+function tokenRefused(err) {
+    return err.status === 401 || (err.status === 403 && !err.rateLimited);
+}
+
+/* A repo's answer that another token (or none) may get past: a refused
+ * token, or 404. */
 function refused(err) {
-    return err.status === 401 || err.status === 404 || (err.status === 403 && !err.rateLimited);
+    return err.status === 404 || tokenRefused(err);
 }
 
 function missing(err) {
@@ -1267,7 +1273,7 @@ function githubReader(s, ctx) {
      * sign-in that a public repo the App is not installed on refuses), again
      * without it. Of two failures, a rate limit's is said, else the first. */
     const tokenOrNone = (run) => run(false).catch((err) => {
-        if (anonymous() || !(err.status === 401 || (err.status === 403 && !err.rateLimited))) {
+        if (anonymous() || !tokenRefused(err)) {
             throw err;
         }
         return run(true).catch((again) => {
@@ -1543,7 +1549,7 @@ function githubReader(s, ctx) {
             if (!anonymous()) {
                 // a token GitHub refuses anywhere in the read leaves the repo to another token, or none
                 return viaApi().catch((err) => {
-                    throw !err.auth && (err.status === 401 || (err.status === 403 && !err.rateLimited)) ? authError(err.message) : err;
+                    throw !err.auth && tokenRefused(err) ? authError(err.message) : err;
                 });
             }
             // read without a token: the repo is public

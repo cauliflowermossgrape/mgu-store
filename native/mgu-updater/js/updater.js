@@ -2297,8 +2297,6 @@ class Updater {
         const self = id === SELF;
         const toolDir = path.join(this.conf.tool_root, id);
         let before = null;
-        // the GitHub API requests the download makes
-        const apiBefore = rt.reader.apiRequests ? rt.reader.apiRequests() : 0;
         return Promise.resolve()
             .then(() => {
                 Object.keys(entry.requires).forEach((dep) => {
@@ -2317,8 +2315,7 @@ class Updater {
             .then((bytes) => {
                 this.busy.phase = 'verify';
                 this.changed();
-                const requests = rt.reader.apiRequests ? rt.reader.apiRequests() - apiBefore : 0;
-                console.log(`${id}@${entry.version}: verify${requests ? ` (downloaded with ${requests} GitHub API requests)` : ''}`);
+                console.log(`${id}@${entry.version}: verify`);
                 if ((entry.artifact.size && bytes.length !== entry.artifact.size) ||
                     (entry.artifact.sha256 && sha256(bytes) !== entry.artifact.sha256)) {
                     throw new Error('download does not match the catalog (size or sha256)');

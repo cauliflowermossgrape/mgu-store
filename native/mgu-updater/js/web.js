@@ -870,7 +870,7 @@ function ghRepo(v) {
 }
 /* What the typed repository offers (source-probe): the channel list shows only that. */
 var probe = { key: null, seq: 0, status: null, tokens: '' };
-var PROBE_NOTE = { 'auth-needed': 'Not found or private', offline: 'Offline', 'rate-limited': 'GitHub rate limit reached' };
+var PROBE_NOTE = { 'auth-needed': 'Not found or private', offline: 'Offline', 'rate-limited': 'GitHub limit reached. Try later or sign in.' };
 function setChannels(list) {
   var sel = $('addChannel');
   sel.textContent = '';

@@ -92,11 +92,12 @@ only where they do not reach:
 | a commit's tarball | `codeload.github.com` (`github_codeload`) |
 | an artifact | the URL its catalog names: a release download on `github.com` costs no API request |
 | the folders an `apps` pattern lists | the API's contents, once per new commit |
-| a releases layout's listing (no `catalog` release) | the API's releases list; the packages and `mgu-store.json` from `github.com` |
+| the releases channel (or none) of a repo without a `catalog` release | the API, as with a token (the repo, its `catalog` release, its releases list: 3 requests a check); a releases layout's packages and `mgu-store.json` from `github.com` |
+| what a repo can be added on (`source-probe`) | the API (the repo, its releases, tags and branches), once when it is added |
 
 A repo those hosts do not reach (not there, or private: 401 or 404) is
 read through the API as with a token. Each check's log line ends with the
-API requests it made, and an install's `verify` line with its download's.
+API requests it made.
 
 **Layouts.** A source reads as the first of these it has:
 
@@ -348,9 +349,9 @@ the folder again every `usb_poll_s` and on each check.
 - A GitHub source is read with a stored token when there is one (the
   one that read it last first), public repos too, through the API. It is
   read without a token ("GitHub without a token") only when every token is
-  refused for that repo: a 401, a 404, or a 403 that is no rate limit (a
-  GitHub App's sign-in refuses a repo the App is not installed on)
-  anywhere in the read. A download refused that way (an artifact, an
+  refused for that repo: a 404 for the repo, or a 401 or a 403 that is no
+  rate limit (a GitHub App's sign-in refuses a repo the App is not
+  installed on) anywhere in the read. A download refused that way (an artifact, an
   icon, a tarball) is downloaded again without the token. A source no
   token reaches is `auth-needed`. A request GitHub's rate limit refuses
   (a 429, or a 403 with `x-ratelimit-remaining: 0` or `retry-after`), a
