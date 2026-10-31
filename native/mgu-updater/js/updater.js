@@ -806,6 +806,10 @@ class Updater {
             },
             version: this.version,
             githubApi: conf.github_api || 'https://api.github.com',
+            // a public repo without a token is read from these (sources.js githubReader)
+            githubWeb: conf.github_web || 'https://github.com',
+            githubRaw: conf.github_raw || 'https://raw.githubusercontent.com',
+            githubCodeload: conf.github_codeload || 'https://codeload.github.com',
             maxRepoBytes: Number(conf.repo_max_bytes) || 64 << 20,
             maxBuildBytes: Number(conf.build_max_bytes) || 200 << 20,
             // an index source's packages, kept by their sha256
@@ -1435,12 +1439,15 @@ class Updater {
 
     /* A source's listing. A GitHub source is read with each candidate token
      * in turn (a reader of its own per token) until one reaches the repo;
-     * that one is kept for it (rt.tokenId), and its downloads use it. */
+     * that one is kept for it (rt.tokenId), and its downloads use it. The
+     * listing, or the error, carries apiRequests: the GitHub API requests
+     * the read made. */
     readSource(rt) {
         if (rt.def.type !== 'github') {
             return rt.reader.catalog();
         }
         const cands = this.candidates(rt);
+        let requests = 0;
         const attempt = (i) => {
             const text = cands[i] ? this.tokens.text(cands[i]) : '';
             const reader = sourcesLib.reader(rt.def, Object.assign({}, this.ctx, { tokenFor: () => text,
@@ -1448,15 +1455,16 @@ class Updater {
             return reader.catalog().then((cat) => {
                 rt.tokenId = cands[i];
                 rt.public = cat.public === true;
-                return cat;
+                return Object.assign(cat, { apiRequests: requests + reader.apiRequests() });
             }, (err) => {
+                requests += reader.apiRequests();
                 if (err.auth && i + 1 < cands.length) {
                     return attempt(i + 1);
                 }
                 if (err.auth) {
                     rt.tokenId = null;
                 }
-                throw err;
+                throw Object.assign(err, { apiRequests: requests });
             });
         };
         return attempt(0);
@@ -1497,14 +1505,16 @@ class Updater {
                 }
                 console.log(`source ${id}${rt.channel ? ` (${rt.channel})` : ''}${rt.tokenId ? ` with token ${rt.tokenId}` : ''}: ` +
                     `${rt.mode}${rt.commit ? ` ${rt.commit.slice(0, 7)}` : ''}, ` +
-                    `${cat.components.map((c) => `${c.id}@${c.version}`).join(' ') || 'nothing'}${rt.error ? `; ${rt.error}` : ''}`);
+                    `${cat.components.map((c) => `${c.id}@${c.version}`).join(' ') || 'nothing'}${rt.error ? `; ${rt.error}` : ''}` +
+                    `${cat.apiRequests !== undefined ? `; ${cat.apiRequests} GitHub API requests` : ''}`);
                 // in the background: a slow icon host holds up no check
                 this.fetchIcons(rt);
             }, (err) => {
                 rt.status = err.auth ? 'auth-needed' : 'error';
                 rt.error = err.message;
                 rt.answered = err.status !== undefined || !!err.auth;
-                console.log(`source ${id}: ${rt.status}: ${err.message}`);
+                console.log(`source ${id}: ${rt.status}: ${err.message}` +
+                    `${err.apiRequests !== undefined ? `; ${err.apiRequests} GitHub API requests` : ''}`);
             })
             .then(() => {
                 rt.checking = null;
@@ -2287,6 +2297,8 @@ class Updater {
         const self = id === SELF;
         const toolDir = path.join(this.conf.tool_root, id);
         let before = null;
+        // the GitHub API requests the download makes
+        const apiBefore = rt.reader.apiRequests ? rt.reader.apiRequests() : 0;
         return Promise.resolve()
             .then(() => {
                 Object.keys(entry.requires).forEach((dep) => {
@@ -2305,7 +2317,8 @@ class Updater {
             .then((bytes) => {
                 this.busy.phase = 'verify';
                 this.changed();
-                console.log(`${id}@${entry.version}: verify`);
+                const requests = rt.reader.apiRequests ? rt.reader.apiRequests() - apiBefore : 0;
+                console.log(`${id}@${entry.version}: verify${requests ? ` (downloaded with ${requests} GitHub API requests)` : ''}`);
                 if ((entry.artifact.size && bytes.length !== entry.artifact.size) ||
                     (entry.artifact.sha256 && sha256(bytes) !== entry.artifact.sha256)) {
                     throw new Error('download does not match the catalog (size or sha256)');

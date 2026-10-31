@@ -1166,35 +1166,127 @@ function orderBranches(names, defaultBranch) {
 
 const SEMVER_TAG = /^(?:v|[a-z0-9][a-z0-9_-]{0,63}@)?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/;
 
-/* A GitHub repo through the REST API at conf github_api, on its channel:
+// what a request GitHub's rate limit refused fails with
+const RATE_LIMIT = 'GitHub limit reached. Try later or sign in.';
+
+/* The refs a repo's smart HTTP advertisement (info/refs?service=git-upload-pack)
+ * lists: { refs: { "<ref name>": "<sha>" }, head: the ref HEAD points to, or
+ * null }. An annotated tag's commit is its "<tag>^{}" ref. */
+function parseRefs(buf) {
+    if (buf.slice(0, 30).toString('latin1') !== '001e# service=git-upload-pack\n') {
+        throw new Error('not a git ref advertisement');
+    }
+    const refs = {};
+    let head = null;
+    let i = 0;
+    while (i < buf.length) {
+        const len = /^[0-9a-f]{4}$/.test(buf.slice(i, i + 4).toString('latin1')) ? parseInt(buf.slice(i, i + 4).toString('latin1'), 16) : -1;
+        if (len === 0) {
+            i += 4;
+            continue;
+        }
+        if (len < 4 || i + len > buf.length) {
+            throw new Error('not a git ref advertisement');
+        }
+        let line = buf.slice(i + 4, i + len).toString('utf8').replace(/\n$/, '');
+        i += len;
+        const nul = line.indexOf('\0');
+        if (nul >= 0) {
+            const m = /(?:^| )symref=HEAD:(\S+)/.exec(line.slice(nul + 1));
+            head = m ? m[1] : head;
+            line = line.slice(0, nul);
+        }
+        const m = /^([0-9a-f]{40}) (\S+)$/.exec(line);
+        if (m) {
+            refs[m[2]] = m[1];
+        }
+    }
+    return { refs, head };
+}
+
+/* A GitHub repo on its channel:
  *  releases       the `catalog` release's catalog.json, else the packages
  *                 attached to its releases (releases layout);
  *  branch:<name>  mgu-repo.json at the branch's head commit;
  *  branch         the same, on the repo's default branch;
  *  tags           mgu-repo.json at the highest x.y.z tag (v1.2.3, 1.2.3, <id>@1.2.3).
  * No channel: releases when the repo has a release, else its default branch.
- * catalog()'s `public` is the repo's own word (`private: false`). */
+ *
+ * With a token it is read through the REST API at conf github_api. Without
+ * one it is read from GitHub's web hosts, which the API's rate limit for an
+ * address without a token (60 requests an hour) does not count: the catalog
+ * release's catalog.json from github.com's release download (conf
+ * github_web), a branch's or tag's commit from the refs github.com
+ * advertises to git, files from raw.githubusercontent.com (github_raw) and
+ * the commit's tarball from codeload.github.com (github_codeload). A repo
+ * those do not reach (not there, or private) is read through the API.
+ * catalog()'s `public` is the repo's own word (`private: false`), or that it
+ * was read without a token. apiRequests(): the API requests this reader
+ * made. */
 function githubReader(s, ctx) {
     const api = ctx.githubApi.replace(/\/+$/, '');
     const repoUrl = `${api}/repos/${s.repo}`;
-    const headers = (url, accept) => {
-        const token = ctx.tokenFor(s.id);
+    const apiHost = new URL(api).host;
+    const web = (ctx.githubWeb || 'https://github.com').replace(/\/+$/, '');
+    const rawHost = (ctx.githubRaw || 'https://raw.githubusercontent.com').replace(/\/+$/, '');
+    const codeload = (ctx.githubCodeload || 'https://codeload.github.com').replace(/\/+$/, '');
+    let apiRequests = 0;
+    const anonymous = () => !ctx.tokenFor(s.id);
+    // anon: without the token
+    const headers = (url, accept, anon) => {
+        const token = anon ? '' : ctx.tokenFor(s.id);
         // the token goes to the API host only
         const auth = token && new URL(url).hostname === 'api.github.com' ? { Authorization: `Bearer ${token}` } : {};
         return Object.assign({ Accept: accept }, auth, ua(ctx.version));
     };
+    // every request: the API host's counted, a rate limit's refusal said as such
+    const counted = (url, run) => {
+        if (new URL(url).host === apiHost) {
+            apiRequests += 1;
+        }
+        return run().catch((err) => {
+            throw err.rateLimited ? Object.assign(new Error(RATE_LIMIT), { status: err.status, rateLimited: true }) : err;
+        });
+    };
     // asked for again with their ETag: an unchanged answer is a 304 and the body kept from before
-    const json = (url, name) => ctx.net.cached(url, headers(url, 'application/vnd.github+json'), name, 4 << 20)
+    const json = (url, name) => counted(url, () => ctx.net.cached(url, headers(url, 'application/vnd.github+json'), name, 4 << 20))
         .then((b) => parseJson(b, url));
     // a listing read before from the same commit or the same catalog.json (its memoKey): the updater's copy
     const reuse = (key) => (ctx.reuse ? ctx.reuse(key) : null);
-    const raw = (url, name, max, onProgress) => ctx.net.get(url, headers(url, 'application/octet-stream'), name, max, onProgress);
-    // the tarball endpoint redirects to codeload for its JSON media type; octet-stream is refused (415)
-    const tarball = (commit, onProgress) => ctx.net.get(`${repoUrl}/tarball/${commit}`, headers(repoUrl, 'application/vnd.github+json'),
-        `${s.repo.replace('/', '-')}.tgz`, ctx.maxRepoBytes, onProgress);
+    const raw = (url, name, max, onProgress, anon) => counted(url, () => ctx.net.get(url, headers(url, 'application/octet-stream', anon),
+        name, max, onProgress));
+    // the tarball endpoint redirects to codeload for its JSON media type; octet-stream is refused (415).
+    // Without a token, codeload itself.
+    const tarball = (commit, onProgress, anon) => {
+        const url = anon || anonymous() ? `${codeload}/${s.repo}/tar.gz/${commit}` : `${repoUrl}/tarball/${commit}`;
+        return counted(url, () => ctx.net.get(url, headers(url, 'application/vnd.github+json', anon),
+            `${s.repo.replace('/', '-')}.tgz`, ctx.maxRepoBytes, onProgress));
+    };
+    /* A download, run(anon) with the token and, when GitHub refuses the
+     * token there (a 401, or a 403 that is no rate limit: a GitHub App's
+     * sign-in that a public repo the App is not installed on refuses), again
+     * without it. Of two failures, a rate limit's is said, else the first. */
+    const tokenOrNone = (run) => run(false).catch((err) => {
+        if (anonymous() || !(err.status === 401 || (err.status === 403 && !err.rateLimited))) {
+            throw err;
+        }
+        return run(true).catch((again) => {
+            throw again.rateLimited ? again : err;
+        });
+    });
     // a file's own bytes from the contents API (else it answers with JSON around them)
-    const content = (url, name, max) => ctx.net.get(url, headers(url, 'application/vnd.github.raw+json'), name, max);
+    const content = (url, name, max) => counted(url, () => ctx.net.get(url, headers(url, 'application/vnd.github.raw+json'), name, max));
     const encode = (rel) => rel.split('/').map(encodeURIComponent).join('/');
+    // a file of the repo at a commit: raw.githubusercontent.com without a token, else the contents API
+    const fileAt = (sha, rel, max, anon) => (anon || anonymous() ? raw(`${rawHost}/${s.repo}/${sha}/${encode(rel)}`, path.posix.basename(rel), max)
+        : content(`${repoUrl}/contents/${encode(rel)}?ref=${sha}`, path.posix.basename(rel), max));
+    // a release asset's download from github.com, which redirects to its storage
+    const download = (tag, name) => `${web}/${s.repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`;
+    // the refs github.com advertises to git (parseRefs)
+    const refs = () => {
+        const url = `${web}/${s.repo}.git/info/refs?service=git-upload-pack`;
+        return counted(url, () => ctx.net.get(url, ua(ctx.version), 'refs', 4 << 20)).then(parseRefs);
+    };
     // an icon named by a release asset's name is that asset; an https URL stays
     const assetIcon = (c, assets) => {
         if (c.icon && !/^https:\/\//.test(c.icon.ref)) {
@@ -1224,12 +1316,43 @@ function githubReader(s, ctx) {
         });
     };
 
+    /* The catalog release's catalog.json from github.com, asked for again
+     * with the ETag of its download (an unchanged one is a 304 and the copy
+     * from before); its icons, the release's assets by name, from there too.
+     * null when it is not there or no catalog. */
+    const webCatalog = () => {
+        const url = download('catalog', 'catalog.json');
+        return counted(url, () => ctx.net.cached(url, headers(url, 'application/octet-stream'), 'catalog.json', 4 << 20)).then((b) => {
+            let cat;
+            try {
+                cat = Object.assign({ mode: 'catalog' }, catalogLib.parse(b.toString('utf8')));
+            } catch (e) {
+                return null;
+            }
+            cat.components.forEach((c) => {
+                if (c.icon && !/^https:\/\//.test(c.icon.ref)) {
+                    c.icon.ref = download('catalog', c.icon.ref);
+                }
+            });
+            return cat;
+        }, (err) => {
+            if (err.status === 404) {
+                return null;
+            }
+            throw err;
+        });
+    };
+
     const fromReleases = (releases) => {
         const newest = new Map();
         let meta = null;
         const assets = [];
+        // without a token, each asset from its release's download on github.com
+        const anon = anonymous();
         releases.filter((r) => r && !r.draft && !r.prerelease).forEach((r) => {
-            (r.assets || []).forEach((a) => {
+            (r.assets || []).forEach((listed) => {
+                const a = anon && typeof r.tag_name === 'string' && listed && typeof listed.name === 'string'
+                    ? Object.assign({}, listed, { url: download(r.tag_name, listed.name) }) : listed;
                 assets.push(a);
                 if (a.name === 'mgu-store.json' && !meta) {
                     meta = a;
@@ -1295,7 +1418,8 @@ function githubReader(s, ctx) {
             unsure = unsure || e.status !== 404;
             throw Object.assign(e, { missing: e.status === 404 });
         };
-        const readFile = (rel) => content(`${repoUrl}/contents/${encode(rel)}?ref=${sha}`, path.posix.basename(rel), SMALL).catch(failed);
+        const readFile = (rel) => fileAt(sha, rel, SMALL).catch(failed);
+        // through the API with or without a token: GitHub's web hosts list no folder
         const listDir = (rel) => json(`${repoUrl}/contents/${encode(rel)}?ref=${sha}`, 'contents.json').then((items) => {
             if (!Array.isArray(items)) {
                 throw new Error(`${rel}: not a folder`);
@@ -1307,6 +1431,31 @@ function githubReader(s, ctx) {
         });
     };
 
+    /* A branch or tags channel at the commit the advertised refs give it. */
+    const fromRefs = (channel, r) => {
+        if (channel === 'tags') {
+            let best = null;
+            Object.keys(r.refs).forEach((name) => {
+                const m = /^refs\/tags\/([^^]+)$/.exec(name);
+                const v = m && SEMVER_TAG.exec(m[1]);
+                if (v && (!best || catalogLib.compareVersions(v[1], best.version) > 0)) {
+                    // an annotated tag's commit is its peeled ref
+                    best = { version: v[1], sha: r.refs[`${name}^{}`] || r.refs[name] };
+                }
+            });
+            if (!best) {
+                throw new Error('no x.y.z tag');
+            }
+            return atCommit(best.sha, false);
+        }
+        const branch = channel.slice('branch:'.length);
+        const sha = r.refs[`refs/heads/${branch}`];
+        if (!sha) {
+            throw new Error(`no branch ${branch}`);
+        }
+        return atCommit(sha, true);
+    };
+
     const onChannel = (channel) => {
         if (channel === 'releases') {
             return json(`${repoUrl}/releases/tags/catalog`, 'release.json').then(fromCatalog, (err) => {
@@ -1315,6 +1464,9 @@ function githubReader(s, ctx) {
                 }
                 return releasesList(100).then(fromReleases);
             });
+        }
+        if (anonymous()) {
+            return refs().then((r) => fromRefs(channel, r));
         }
         if (channel === 'tags') {
             return json(`${repoUrl}/tags?per_page=100`, 'tags.json').then((tags) => {
@@ -1334,7 +1486,7 @@ function githubReader(s, ctx) {
         const branch = channel.slice('branch:'.length);
         // the head commit's sha alone (its media type): the commit's files are read only when it moved
         const url = `${repoUrl}/commits/${encodeURIComponent(branch)}`;
-        return ctx.net.cached(url, headers(url, 'application/vnd.github.sha'), 'commit.sha', 1024)
+        return counted(url, () => ctx.net.cached(url, headers(url, 'application/vnd.github.sha'), 'commit.sha', 1024))
             .then((b) => atCommit(b.toString('utf8').trim(), true), (err) => {
                 throw err.status === 404 || err.status === 422 ? new Error(`no branch ${branch}`) : err;
             });
@@ -1348,6 +1500,7 @@ function githubReader(s, ctx) {
 
     return {
         network: true,
+        apiRequests: () => apiRequests,
         /* What the repo can be added on: its name as GitHub spells it,
          * whether it has a release and an x.y.z tag, its default branch and
          * its branches (orderBranches). */
@@ -1368,35 +1521,54 @@ function githubReader(s, ctx) {
                         more: branches.more
                     };
                 })),
-        catalog: () => json(repoUrl, 'repo.json')
-            .catch((err) => {
-                throw refused(err) ? authError(err.message) : err;
-            })
-            .then((repo) => {
-                const branch = `branch:${repo.default_branch || 'main'}`;
-                const done = (channel) => (c) => Object.assign(c, { channel, public: repo.private === false });
-                if (s.channel) {
-                    const channel = s.channel === 'branch' ? branch : s.channel;
-                    return onChannel(channel).then(done(channel));
-                }
-                return json(`${repoUrl}/releases/tags/catalog`, 'release.json').then((r) => fromCatalog(r).then(done('releases')), (err) => {
-                    if (!missing(err)) {
-                        throw err;
+        catalog: () => {
+            const viaApi = () => json(repoUrl, 'repo.json')
+                .catch((err) => {
+                    throw refused(err) ? authError(err.message) : err;
+                })
+                .then((repo) => {
+                    const branch = `branch:${repo.default_branch || 'main'}`;
+                    const done = (channel) => (c) => Object.assign(c, { channel, public: repo.private === false });
+                    if (s.channel) {
+                        const channel = s.channel === 'branch' ? branch : s.channel;
+                        return onChannel(channel).then(done(channel));
                     }
-                    return releasesList(100).then((r) => (r.length ? fromReleases(r).then(done('releases')) : onChannel(branch).then(done(branch))));
+                    return json(`${repoUrl}/releases/tags/catalog`, 'release.json').then((r) => fromCatalog(r).then(done('releases')), (err) => {
+                        if (!missing(err)) {
+                            throw err;
+                        }
+                        return releasesList(100).then((r) => (r.length ? fromReleases(r).then(done('releases')) : onChannel(branch).then(done(branch))));
+                    });
                 });
-            })
-            .catch((err) => {
-                throw err.rateLimited ? Object.assign(new Error('GitHub rate limit reached'), { status: err.status, rateLimited: true }) : err;
-            }),
-        artifact: (entry, onProgress) => raw(entry.artifact.url, entry.artifact.name, entry.artifact.size, onProgress),
+            if (!anonymous()) {
+                // a token GitHub refuses anywhere in the read leaves the repo to another token, or none
+                return viaApi().catch((err) => {
+                    throw !err.auth && (err.status === 401 || (err.status === 403 && !err.rateLimited)) ? authError(err.message) : err;
+                });
+            }
+            // read without a token: the repo is public
+            if (!s.channel || s.channel === 'releases') {
+                return webCatalog().then((cat) => (cat ? Object.assign(cat, { channel: 'releases', public: true }) : viaApi()));
+            }
+            return refs().then((r) => {
+                const channel = s.channel === 'branch' ? `branch:${/^refs\/heads\//.test(r.head || '') ? r.head.slice('refs/heads/'.length) : 'main'}`
+                    : s.channel;
+                return fromRefs(channel, r).then((c) => Object.assign(c, { channel, public: true }));
+            }, (err) => {
+                if (refused(err)) {
+                    return viaApi();
+                }
+                throw err;
+            });
+        },
+        artifact: (entry, onProgress) => tokenOrNone((anon) => raw(entry.artifact.url, entry.artifact.name, entry.artifact.size, onProgress, anon)),
         // a repo tree's icon is its file at the listed commit
-        icon: (entry) => (/^https:\/\//.test(entry.icon.ref) ? raw(entry.icon.ref, 'icon.png', ICON_BYTES)
+        icon: (entry) => (/^https:\/\//.test(entry.icon.ref) ? tokenOrNone((anon) => raw(entry.icon.ref, 'icon.png', ICON_BYTES, null, anon))
             : entry.commit && safeRel(entry.icon.ref) ? iconOf(entry, (rel, max) => (safeRel(rel)
-                ? content(`${repoUrl}/contents/${encode(rel)}?ref=${entry.commit}`, path.posix.basename(rel), max)
+                ? tokenOrNone((anon) => fileAt(entry.commit, rel, max, anon))
                 : Promise.reject(new Error('an icon path stays inside the repo'))))
                 : Promise.reject(new Error('an icon is a release asset, an https url or a file of the repo tree'))),
-        files: (commit, onProgress, under) => tarball(commit, onProgress)
+        files: (commit, onProgress, under) => tokenOrNone((anon) => tarball(commit, onProgress, anon))
             .then((buf) => tar.untgz(buf, ctx.maxBuildBytes))
             // the tarball's one top folder (<owner>-<repo>-<sha>/) is left off
             .then((members) => members.map((m) => ({ name: m.name.slice(m.name.indexOf('/') + 1), data: m.data, mode: m.mode }))
@@ -1616,8 +1788,9 @@ function looseReader(root, ctx) {
 /* ---- one source --------------------------------------------------------------------- */
 
 /* A reader for a stored source or a USB folder. ctx: { net, tokenFor(source
- * id) -> the token text for it or '', version, githubApi, maxRepoBytes (a tarball download), maxBuildBytes (a
- * repo's files) }. */
+ * id) -> the token text for it or '', version, githubApi, githubWeb,
+ * githubRaw, githubCodeload, maxRepoBytes (a tarball download),
+ * maxBuildBytes (a repo's files) }. */
 function reader(s, ctx) {
     if (s.type === 'github') {
         return githubReader(s, ctx);
@@ -1638,5 +1811,6 @@ function label(s) {
 module.exports = {
     load, save, checkStored, writePrivate, mkdirPrivate, reader, label, usbSources, mountPoints,
     repoCatalog, packComponent, serviceUnit, preloadFiles, subtree, packageInfo, packageEntry, readInside, walkInside, authError,
-    renameable, renameApp, packageId, uuid5, orderBranches, entryIcons, isIcon, safePath, REPO, CHANNEL, PACKAGE, ICON_BYTES
+    renameable, renameApp, packageId, uuid5, orderBranches, entryIcons, isIcon, safePath, parseRefs, REPO, CHANNEL, PACKAGE, ICON_BYTES,
+    RATE_LIMIT
 };

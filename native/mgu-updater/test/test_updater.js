@@ -98,7 +98,7 @@ function makeCerts() {
     mkdirp(d);
     sh(`cd ${d} && openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=test-ca -keyout ca.key -out ca.pem 2>&1 &&
         openssl req -newkey rsa:2048 -nodes -subj /CN=updates.test -keyout srv.key -out srv.csr 2>&1 &&
-        printf 'subjectAltName=DNS:updates.test,DNS:other.test,DNS:api.github.com,DNS:github.com,DNS:codeload.github.com\\n' > ext &&
+        printf 'subjectAltName=DNS:updates.test,DNS:other.test,DNS:api.github.com,DNS:github.com,DNS:codeload.github.com,DNS:raw.githubusercontent.com\\n' > ext &&
         openssl x509 -req -in srv.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -extfile ext -out srv.pem 2>&1`);
     return { ca: fs.readFileSync(path.join(d, 'ca.pem'), 'utf8'), key: fs.readFileSync(path.join(d, 'srv.key')), cert: fs.readFileSync(path.join(d, 'srv.pem')) };
 }
@@ -114,7 +114,7 @@ function startDns() {
             i += q[i] + 1;
         }
         const question = q.slice(12, i + 5);
-        const known = /\.test$|(^|\.)github\.com$/.test(labels.join('.'));
+        const known = /\.test$|(^|\.)github\.com$|(^|\.)githubusercontent\.com$/.test(labels.join('.'));
         const header = Buffer.from([q[0], q[1], 0x81, known ? 0x80 : 0x83, 0, 1, 0, known ? 1 : 0, 0, 0, 0, 0]);
         const answer = known ? Buffer.from([0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1]) : Buffer.alloc(0);
         s.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
@@ -124,12 +124,15 @@ function startDns() {
 
 const seen = [];
 
-/* ---- a fake GitHub (api.github.com, github.com, codeload.github.com) ---------- */
+/* ---- a fake GitHub (api.github.com, github.com, codeload.github.com, raw.githubusercontent.com) -- */
 
 const API = `https://api.github.com:${HTTPS_PORT}`;
 const GH_WEB = `https://github.com:${HTTPS_PORT}`;
+const RAW = `https://raw.githubusercontent.com:${HTTPS_PORT}`;
+const CODELOAD = `https://codeload.github.com:${HTTPS_PORT}`;
+// webLimited: github.com answers 429; assetNotModified: 304s of a release asset's storage
 const gh = { repos: {}, users: { 'tok-all': 'tester', 'tok-third': 'other-acct', 'tok-device': 'tester' }, polls: 0, refreshes: 0, device: null,
-    deviceExpired: false, rateLimited: false, anonLimited: false, notModified: 0 };
+    deviceExpired: false, rateLimited: false, anonLimited: false, webLimited: false, notModified: 0, assetNotModified: 0 };
 
 /* A repo: private ones answer only to one of their tokens (404 without, 401
  * with a wrong one). trees: commit sha -> { path: [data, mode] }. */
@@ -167,6 +170,98 @@ function ghTarball(repo, sha) {
     fs.symlinkSync('/etc/passwd', path.join(dir, top, 'link-out'));
     sh(`tar -czf ${dir}.tgz -C ${dir} ${top}`);
     return fs.readFileSync(`${dir}.tgz`);
+}
+
+/* A repo's releases with their tags (the catalog release is a release too). */
+function ghReleases(repo) {
+    return (repo.catalog ? [{ tag: 'catalog', assets: [{ name: 'catalog.json', data: repo.catalog }] }] : [])
+        .concat(repo.releases.map((r, i) => Object.assign({ tag: `v${i}` }, r)));
+}
+
+/* The bytes of a release asset by its release's tag and its name; a
+ * catalog's artifacts and icons (repo.files) under any tag. */
+function ghAsset(repo, tag, name) {
+    const r = ghReleases(repo).find((x) => x.tag === tag);
+    const a = r && r.assets.find((x) => x.name === name);
+    return a ? a.data : (repo.files && repo.files[name]) || null;
+}
+
+/* The refs a repo advertises to git (info/refs?service=git-upload-pack):
+ * HEAD on its default branch, its branches and its tags (an annotated one
+ * with its peeled commit). */
+function ghRefs(repo) {
+    const pkt = (line) => `${(Buffer.byteLength(line) + 4).toString(16).padStart(4, '0')}${line}`;
+    const head = repo.branches[repo.default_branch] || '0'.repeat(40);
+    const lines = [`${head} HEAD\0multi_ack side-band-64k symref=HEAD:refs/heads/${repo.default_branch} agent=git/fake\n`]
+        .concat(Object.keys(repo.branches).sort().map((b) => `${repo.branches[b]} refs/heads/${b}\n`))
+        .concat([].concat(...repo.tags.map((t) => (t.annotated ? [`${sha256(Buffer.from(t.name)).slice(0, 40)} refs/tags/${t.name}\n`,
+            `${t.sha} refs/tags/${t.name}^{}\n`] : [`${t.sha} refs/tags/${t.name}\n`]))));
+    return Buffer.from(`${pkt('# service=git-upload-pack\n')}0000${lines.map(pkt).join('')}0000`);
+}
+
+/* github.com's GETs: a release asset's download, a redirect to its storage
+ * (other.test, which answers its ETag with a 304), and the refs a repo
+ * advertises to git. A private repo is not there for them. */
+function ghWebGet(req, res) {
+    const u = new URL(req.url, GH_WEB);
+    const answer = (code, body, headers) => {
+        const data = Buffer.from(body || '');
+        res.writeHead(code, Object.assign({ 'Content-Length': data.length }, headers || {}));
+        res.end(data);
+    };
+    if (gh.webLimited) {
+        answer(429, 'Too Many Requests', { 'Retry-After': '60' });
+        return;
+    }
+    let m = /^\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/.exec(u.pathname);
+    if (m) {
+        const repo = gh.repos[m[1]];
+        const found = repo && !repo.private && ghAsset(repo, decodeURIComponent(m[2]), decodeURIComponent(m[3]));
+        answer(found ? 302 : 404, found ? '' : 'Not Found', found ? { Location: `https://other.test:${HTTPS_PORT}/gh-asset${u.pathname}` } : {});
+        return;
+    }
+    m = /^\/([^/]+\/[^/]+)\.git\/info\/refs$/.exec(u.pathname);
+    const repo = m && gh.repos[m[1]];
+    if (m && u.searchParams.get('service') === 'git-upload-pack') {
+        if (!repo || repo.private) {
+            answer(401, '', { 'WWW-Authenticate': 'Basic realm="GitHub"' });
+        } else {
+            res.writeHead(200, { 'Content-Type': 'application/x-git-upload-pack-advertisement' });
+            res.end(ghRefs(repo));
+        }
+        return;
+    }
+    answer(404, 'Not Found');
+}
+
+/* A release asset from its storage (where github.com's download redirects). */
+function ghAssetStore(req, res) {
+    const m = /^\/gh-asset\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/.exec(req.url);
+    const repo = m && gh.repos[m[1]];
+    const data = repo && ghAsset(repo, decodeURIComponent(m[2]), decodeURIComponent(m[3]));
+    if (!data) {
+        res.writeHead(404);
+        res.end();
+        return;
+    }
+    const etag = `"0x${sha256(data).slice(0, 15).toUpperCase()}"`;
+    if (req.headers['if-none-match'] === etag) {
+        gh.assetNotModified += 1;
+        res.writeHead(304, { ETag: etag });
+        res.end();
+        return;
+    }
+    res.writeHead(200, { 'Content-Length': data.length, ETag: etag });
+    res.end(data);
+}
+
+/* raw.githubusercontent.com: a public repo's file at a commit. */
+function ghRaw(req, res) {
+    const m = /^\/([^/]+\/[^/]+)\/([0-9a-f]{40})\/(.+)$/.exec(req.url);
+    const repo = m && gh.repos[m[1]];
+    const f = repo && !repo.private && repo.trees[m[2]] && repo.trees[m[2]][decodeURIComponent(m[3])];
+    res.writeHead(f ? 200 : 404, { 'Content-Length': f ? f[0].length : 0 });
+    res.end(f ? f[0] : '');
 }
 
 function ghApi(req, res, auth) {
@@ -230,6 +325,12 @@ function ghApi(req, res, auth) {
             send(404, { message: 'Not Found' });
         }
     } else if (rest.indexOf('/releases/assets/') === 0) {
+        // forbidOnly: those asset names alone
+        if (repo.forbidAssets && auth && repo.forbidAssets.indexOf(auth.replace(/^Bearer /, '')) >= 0 &&
+            (!repo.forbidOnly || repo.forbidOnly.indexOf(decodeURIComponent(rest.slice('/releases/assets/'.length))) >= 0)) {
+            send(403, { message: 'Resource not accessible by integration' });
+            return;
+        }
         const name = decodeURIComponent(rest.slice('/releases/assets/'.length));
         let data = name === 'catalog.json' ? repo.catalog : null;
         repo.releases.forEach((r) => r.assets.forEach((x) => {
@@ -243,9 +344,7 @@ function ghApi(req, res, auth) {
         send(data ? 200 : 404, data || { message: 'Not Found' });
     } else if (rest === '/releases') {
         const n = Number(u.searchParams.get('per_page')) || 30;
-        // the catalog release is a release too
-        const all = (repo.catalog ? [{ assets: [{ name: 'catalog.json', data: repo.catalog }] }] : []).concat(repo.releases);
-        send(200, all.slice(0, n).map((r) => ({ draft: !!r.draft, prerelease: !!r.prerelease,
+        send(200, ghReleases(repo).slice(0, n).map((r) => ({ tag_name: r.tag, draft: !!r.draft, prerelease: !!r.prerelease,
             assets: r.assets.map((x) => ({ name: x.name, size: x.data.length, url: assetUrl(x.name), updated_at: updated(x.data) })) })));
     } else if (rest.indexOf('/commits/') === 0) {
         const sha = repo.branches[decodeURIComponent(rest.slice('/commits/'.length))];
@@ -328,11 +427,24 @@ function startHttps(certs, dir) {
                 return;
             }
             if (host === 'github.com') {
-                ghWeb(req, res, body);
+                if (req.method === 'GET') {
+                    ghWebGet(req, res);
+                } else {
+                    ghWeb(req, res, body);
+                }
+                return;
+            }
+            if (host === 'raw.githubusercontent.com') {
+                ghRaw(req, res);
+                return;
+            }
+            if (host === 'other.test' && req.url.indexOf('/gh-asset/') === 0) {
+                ghAssetStore(req, res);
                 return;
             }
             if (host === 'codeload.github.com') {
-                const m = /^\/([^/]+\/[^/]+)\/legacy\.tar\.gz\/([0-9a-f]+)$/.exec(req.url);
+                // the API's tarball redirect, or codeload's own address of a commit
+                const m = /^\/([^/]+\/[^/]+)\/(?:legacy\.tar\.gz|tar\.gz)\/([0-9a-f]+)$/.exec(req.url);
                 const data = m && gh.repos[m[1]] && gh.repos[m[1]].trees[m[2]] ? ghTarball(m[1], m[2]) : null;
                 res.writeHead(data ? 200 : 404, { 'Content-Length': data ? data.length : 0 });
                 res.end(data || '');
@@ -1693,7 +1805,7 @@ function testSources(certs) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: 'Iv1.test', github_app_url: 'https://github.com/apps/mgu-store/', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: 'Iv1.test', github_app_url: 'https://github.com/apps/mgu-store/', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts, usb_roots: media, web_secret: path.join(M, 'run', 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -2406,7 +2518,7 @@ function testUnitServices(certs, pubDir) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: 'Iv1.test', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: 'Iv1.test', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -2671,7 +2783,7 @@ function testCrossSource(certs) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: 'Iv1.test', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: 'Iv1.test', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -2836,7 +2948,7 @@ function testIndexV2(certs, pubDir) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3012,7 +3124,7 @@ function testAppManager(certs, pubDir) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3145,7 +3257,9 @@ function testIdrive7(certs) {
     const gforceIcon = png(90, 3);
     const srcIcon = png(95, 4);
     // GitHub requests that read an icon (or the application.json naming a source package's)
-    const iconReads = (from) => seen.slice(from).filter((x) => /\/contents\/[^?]*(icon\.png|application\.json)/.test(x.url)).map((x) => x.url.split('?')[0]);
+    // a public repo read without a token: its files from raw.githubusercontent.com, none through the API
+    const iconReads = (from) => seen.slice(from).filter((x) => (/^raw\.githubusercontent\.com/.test(x.host) || /\/contents\//.test(x.url)) &&
+        /(icon\.png|application\.json)(\?|$)/.test(x.url)).map((x) => `${/^raw\./.test(x.host) ? 'raw' : 'api'}:${x.url.split('?')[0]}`);
     let mark = seen.length;
     fs.writeFileSync(`${deployLog}.idrive7`, JSON.stringify([{ id: 'car_vitals', version: '2.13.0' }, { id: 'my_kitapp', version: '0.1.0' },
         { id: 'redline', version: '1.0.0' }]));
@@ -3173,7 +3287,7 @@ function testIdrive7(certs) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3228,7 +3342,7 @@ function testIdrive7(certs) {
             const first = iconReads(mark);
             ok('requests: a new listing reads each app\'s icon once (a source package\'s through its application.json, ' +
                 'then each place it names until one is there), none for an app installed with its own',
-            first.length === 5 && !first.some((u) => /car_vitals/.test(u)), first.join(' '));
+            first.length === 5 && !first.some((u) => /car_vitals/.test(u)) && first.every((u) => /^raw:/.test(u)), first.join(' '));
             mark = seen.length;
             return u.check().then(() => until(() => u.src.get('idrive7-apps').icons, (x) => !x, 30000, 'icons fetched'));
         })
@@ -3345,7 +3459,7 @@ function testIcons() {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: '',
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3430,7 +3544,7 @@ function testAppRemove() {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: '',
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3528,7 +3642,7 @@ function testUndo() {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: state, tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: '',
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -3752,7 +3866,7 @@ function testPythonRepo() {
         { id: 'pyrepo', type: 'file', path: repo }, { id: 'pytools', type: 'file', path: tools }] }));
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: path.join(M, 'state'), tool_root: opt, oap_root: oap,
-        mainapp_uid: '12201', store_app: 'robertn_store', deploy: deploySh, lease, ca_file: '', github_api: API, github_web: GH_WEB,
+        mainapp_uid: '12201', store_app: 'robertn_store', deploy: deploySh, lease, ca_file: '', github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD,
         github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store', fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID),
         build_uid: '12995', build_gid: '12995', build_timeout_s: '20', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         python: path.join(opt, 'mgu-python', 'current', 'bin', 'python3'),
@@ -4020,7 +4134,7 @@ function testIdClash() {
         { id: 'idrive7-apps', type: 'file', path: repo }, { id: 'iterio', type: 'file', path: iterio }, { id: 'pytools', type: 'file', path: tools }] }));
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: path.join(M, 'state'), tool_root: opt, oap_root: oap,
-        mainapp_uid: '12201', store_app: 'robertn_store', deploy: deploySh, lease, ca_file: '', github_api: API, github_web: GH_WEB,
+        mainapp_uid: '12201', store_app: 'robertn_store', deploy: deploySh, lease, ca_file: '', github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD,
         github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store', fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID),
         build_uid: '12995', build_gid: '12995', build_timeout_s: '20', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         python: path.join(opt, 'mgu-python', 'current', 'bin', 'python3'),
@@ -4478,7 +4592,7 @@ function testDefaultPrivate(certs) {
     const conf = {
         sources, credentials_dir: path.join(M, 'cred'), state_dir: path.join(M, 'state'), tool_root: opt, oap_root: oap, mainapp_uid: '12201',
         store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
-        github_api: API, github_web: GH_WEB, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
         build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
         mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
@@ -4601,7 +4715,7 @@ function testRequests(certs) {
         { id: 'tags', type: 'github', repo: 'req/tags', channel: 'tags' },
         { id: 'sso', type: 'github', repo: 'req/sso' }] }));
     const conf = { state_dir: path.join(M, 'state'), sources: path.join(M, 'sources.json'), credentials_dir: path.join(M, 'cred'),
-        lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'), github_api: API,
+        lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'), github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD,
         fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID) };
     let u = new Updater(conf);
     u.tokens.add('tok-all', { login: 'tester', label: 'tester' });
@@ -4679,8 +4793,9 @@ function testRequests(certs) {
         })
         .then(() => {
             ok('token: with the anonymous limit spent, a public repo reads with the token', rt('mgu-store').status === 'ok' && rt('mgu-store').tokenId);
-            ok('token: refused for a public repo, no token is tried; a spent limit then says so', rt('sso').status === 'error' &&
-                rt('sso').error === 'GitHub rate limit reached' && seen.some((x) => x.url === '/repos/req/sso' && x.auth === null), rt('sso').error);
+            ok('token: refused for a public repo, no token is tried: its catalog from github.com, past the spent API limit',
+                rt('sso').status === 'ok' && rt('sso').tokenId === null && !seen.some((x) => x.url.indexOf('/repos/req/sso') === 0 && x.auth === null) &&
+                seen.some((x) => /^github\.com/.test(x.host) && x.url === '/req/sso/releases/download/catalog/catalog.json'), rt('sso').error);
             gh.anonLimited = false;
             return u.checkSource('sso');
         })
@@ -4695,7 +4810,7 @@ function testRequests(certs) {
         .then(() => {
             gh.anonLimited = false;
             ok('token: none stored and the anonymous limit spent: a clear error', rt('rel').status === 'error' &&
-                rt('rel').error === 'GitHub rate limit reached', rt('rel').error);
+                rt('rel').error === 'GitHub limit reached. Try later or sign in.', rt('rel').error);
             ok('token: never sent anywhere but the API host', !seen.slice(from).some((x) => x.auth && !/^api\.github\.com/.test(x.host)));
         });
 }
@@ -4825,6 +4940,199 @@ function testUplink() {
         });
 }
 
+/* Public GitHub repos without a token: read and installed from GitHub's web
+ * hosts (github.com's release downloads and git refs,
+ * raw.githubusercontent.com, codeload.github.com), no API request in a
+ * check or an install; the API where those do not reach (a releases
+ * layout's listing, a catalog.json that is not one, a private repo) and
+ * with a token; a rate limit said plainly on every path; a download a
+ * token is refused for, again without it. */
+function testAnonymous(certs) {
+    const { Updater } = require('../js/updater');
+    const sourcesLib = require('../js/sources');
+    const M = path.join(T, 'anon');
+    const opt = path.join(M, 'opt');
+    const oap = path.join(M, 'oap');
+    const store = path.join(M, 'store');
+    [M, opt, oap, store, path.join(M, 'shm'), path.join(M, 'media')].forEach(mkdirp);
+    const deployLog = path.join(M, 'deploy.log');
+    fs.writeFileSync(deployLog, '');
+    Object.assign(process.env, { TOOL_ROOT: opt, OAP_ROOT: oap, FAKE_DEPLOY_LOG: deployLog });
+    delete process.env.FAKE_LEASE;
+    delete process.env.FAKE_PENDING;
+    const deploySh = path.join(M, 'mgu-deploy.sh');
+    fs.writeFileSync(deploySh, DEPLOY_SH, { mode: 0o755 });
+    fs.writeFileSync(path.join(M, 'lease.json'), JSON.stringify({ interface: 'vethuplink', dns: [`127.0.0.1:${DNS_PORT}`] }));
+    fs.writeFileSync(path.join(M, 'ca.pem'), certs.ca);
+    mkdirp(path.join(opt, 'mgu-deploy', 'versions', '0.7.0'));
+    fs.writeFileSync(path.join(opt, 'mgu-deploy', 'versions', '0.7.0', 'component.json'), JSON.stringify({ id: 'mgu-deploy', kind: 'tool', version: '0.7.0' }));
+    fs.symlinkSync('versions/0.7.0', path.join(opt, 'mgu-deploy', 'current'));
+    publish(store, [], { schema: 2 });
+    const png = (n, fill) => Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(n, fill)]);
+    const icon = png(30, 7);
+    const kit = (id, version) => toolKit(M, id, version, { [`${id}.sh`]: ['#!/bin/sh\n', 0o755] });
+    // a catalog release and a release <id>@<version> per artifact; the catalog names each by url(repo, tag, name)
+    const catalogRepo = (repo, ids, url, opts) => {
+        const files = ids.map((id) => kit(id, '1.0.0'));
+        ghRepo(repo, Object.assign({ files: { 'cat-icon.png': icon } }, opts || {}));
+        gh.repos[repo].releases = files.map((f) => ({ tag: path.basename(f, '.tgz'), assets: [{ name: path.basename(f), data: fs.readFileSync(f) }] }));
+        files.forEach((f) => {
+            gh.repos[repo].files[path.basename(f)] = fs.readFileSync(f);
+        });
+        gh.repos[repo].catalog = Buffer.from(JSON.stringify({ schema: 2, commit: 'test', components: files.map((f) => Object.assign(entry(f, 'tool', 'T'),
+            { uninstallable: true, icon: 'cat-icon.png', artifact: Object.assign(entry(f, 'tool', 'T').artifact, { url: url(repo, path.basename(f, '.tgz'), path.basename(f)) }) })) }));
+    };
+    const download = (repo, tag, name) => `${GH_WEB}/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`;
+    const assetApi = (repo, tag, name) => `${API}/repos/${repo}/releases/assets/${encodeURIComponent(name)}`;
+    catalogRepo('anon/cat', ['cat_tool'], download);
+    catalogRepo('anon/apiurl', ['api_tool'], assetApi);
+    catalogRepo('anon/priv', ['priv_tool'], assetApi, { private: true, tokens: ['tok-all'] });
+    // a releases layout: no catalog release
+    ghRepo('anon/rel', { releases: [{ tag: 'v1', assets: [{ name: 'rel_tool@1.0.0.tgz', data: fs.readFileSync(appTgz(M, 'rel_tool', '1.0.0')) }] }] });
+    // a catalog.json that is not one
+    ghRepo('anon/bad', { catalog: Buffer.from('not json') });
+    const tree = (version) => ({
+        'mgu-repo.json': JSON.stringify({ schema: 1, components: [{ id: 'tree_tool', kind: 'tool', path: 't' }] }),
+        't/component.json': JSON.stringify({ id: 'tree_tool', kind: 'tool', version, files: [{ path: 'run.sh', mode: '0755' }] }),
+        't/run.sh': ['#!/bin/sh\n', 0o755]
+    });
+    ghRepo('anon/tree', { default_branch: 'trunk' });
+    gh.repos['anon/tree'].branches = { trunk: ghCommit('anon/tree', tree('1.0.0')), other: ghCommit('anon/tree', tree('0.0.1')) };
+    ghRepo('anon/tagged');
+    gh.repos['anon/tagged'].tags = [{ name: 'v1.1.0', sha: ghCommit('anon/tagged', tree('1.1.0')), annotated: true },
+        { name: 'v1.0.0', sha: ghCommit('anon/tagged', tree('1.0.0')) }];
+    const sources = path.join(M, 'sources.json');
+    fs.writeFileSync(sources, JSON.stringify({ schema: 1, sources: [{ id: 'mgu-store', type: 'file', path: store, builtin: true },
+        { id: 'cat', type: 'github', repo: 'anon/cat' }, { id: 'apiurl', type: 'github', repo: 'anon/apiurl', channel: 'releases' },
+        { id: 'priv', type: 'github', repo: 'anon/priv' }, { id: 'rel', type: 'github', repo: 'anon/rel' },
+        { id: 'bad', type: 'github', repo: 'anon/bad' }, { id: 'tree', type: 'github', repo: 'anon/tree', channel: 'branch' },
+        { id: 'tagged', type: 'github', repo: 'anon/tagged', channel: 'tags' }] }));
+    const conf = {
+        sources, credentials_dir: path.join(M, 'cred'), state_dir: path.join(M, 'state'), tool_root: opt, oap_root: oap, mainapp_uid: '12201',
+        store_app: 'robertn_store', deploy: deploySh, lease: path.join(M, 'lease.json'), ca_file: path.join(M, 'ca.pem'),
+        github_api: API, github_web: GH_WEB, github_raw: RAW, github_codeload: CODELOAD, github_client_id: '', builtin_repo: 'robertnisipeanu/mgu-store',
+        fetch_uid: String(FETCH_UID), fetch_gid: String(FETCH_UID), build_uid: '12995', build_gid: '12995',
+        build_timeout_s: '3', build_max_bytes: String(8 << 20), repo_max_bytes: String(8 << 20),
+        mounts: path.join(M, 'mounts'), usb_roots: path.join(M, 'media'), web_secret: path.join(M, 'web-secret'), web_uid: '12996', web_gid: '12202',
+        socket: path.join(M, 'shm', 'updater.sock'), socket_group: 'staff', deploy_tool: 'mgu-deploy', uplink_tool: 'mgu-uplink',
+        bootstrap_check_s: '6', privacy_tool: '', reboot: ''
+    };
+    fs.writeFileSync(conf.mounts, '');
+    const u = new Updater(conf);
+    const st = () => u.state();
+    const src = (id) => st().sources.find((x) => x.id === id) || {};
+    const comp = (id) => st().components.find((c) => c.id === id) || {};
+    const rt = (id) => u.src.get(id);
+    // the API requests about a repo since mark, and the requests to GitHub's other hosts
+    const apiOf = (repo, mark) => seen.slice(mark).filter((x) => /^api\.github\.com/.test(x.host) && x.url.indexOf(`/repos/${repo}`) === 0);
+    const webOf = (repo, mark) => seen.slice(mark).filter((x) => !/^api\.github\.com/.test(x.host) && x.url.indexOf(`/${repo}`) >= 0);
+    const logged = [];
+    const log = console.log;
+    const quietly = (p) => {
+        console.log = (...a) => {
+            logged.push(a.join(' '));
+            log(...a);
+        };
+        return p.then((v) => {
+            console.log = log;
+            return v;
+        }, (e) => {
+            console.log = log;
+            throw e;
+        });
+    };
+    const install = (id) => ask(conf.socket, { op: 'install', id })
+        .then((err) => until(st, () => !st().busy && !st().components.some((c) => c.queued), 60000, `${id} done`).then(() => err));
+    let mark = seen.length;
+    const anonRepos = ['anon/cat', 'anon/tree', 'anon/tagged'];
+    return u.serve()
+        .then(() => quietly(u.check()))
+        .then(() => until(() => rt('cat').icons, (x) => !x, 30000, 'icons fetched'))
+        .then(() => {
+            ok('anonymous: a public catalog, a branch and tags are read without one API request', ['cat', 'tree', 'tagged'].every((id) => src(id).status === 'ok') &&
+                anonRepos.every((r) => apiOf(r, mark).length === 0), JSON.stringify(anonRepos.map((r) => apiOf(r, mark).map((x) => x.url))));
+            ok('anonymous: the catalog from github.com\'s release download, its icon from there too', rt('cat').public === true && rt('cat').channel === 'releases' &&
+                comp('cat_tool').icon && fs.readFileSync(comp('cat_tool').icon).equals(icon) &&
+                webOf('anon/cat', mark).some((x) => x.url === '/anon/cat/releases/download/catalog/catalog.json'), JSON.stringify(comp('cat_tool')));
+            ok('anonymous: the branch channel follows the default branch HEAD names; files from raw.githubusercontent.com',
+                rt('tree').channel === 'branch:trunk' && comp('tree_tool').version === '1.0.0' &&
+                webOf('anon/tree', mark).some((x) => /^raw\./.test(x.host) && /\/t\/component\.json$/.test(x.url)), rt('tree').channel);
+            ok('anonymous: tags pick the highest x.y.z tag, an annotated one at its peeled commit', comp('tree_tool@tagged').version === '1.1.0' ||
+                rt('tagged').components[0].version === '1.1.0', JSON.stringify(rt('tagged').components.map((c) => c.version)));
+            ok('anonymous: each check logs its GitHub API requests', ['cat', 'tree', 'tagged'].every((id) =>
+                logged.some((l) => l.indexOf(`source ${id} `) === 0 && /; 0 GitHub API requests$/.test(l))), logged.filter((l) => /^source /.test(l)).join('\n'));
+            ok('fallback: a releases layout (no catalog release) is listed through the API, its packages from github.com',
+                src('rel').status === 'ok' && apiOf('anon/rel', mark).length > 0 &&
+                rt('rel').components[0].artifact.url === `${GH_WEB}/anon/rel/releases/download/v1/rel_tool%401.0.0.tgz`, JSON.stringify(rt('rel').components));
+            ok('fallback: a catalog.json that is no catalog is read through the API, which says why', src('bad').status === 'error' &&
+                /not JSON/.test(src('bad').error) && apiOf('anon/bad', mark).some((x) => x.url === '/repos/anon/bad/releases/tags/catalog'), src('bad').error);
+            ok('fallback: a private repo without a token needs one (github.com does not reach it; the API says so)', src('priv').status === 'auth-needed', src('priv').status);
+            mark = seen.length;
+            gh.assetNotModified = 0;
+            return u.check();
+        })
+        .then(() => {
+            ok('anonymous: an unchanged catalog.json is a 304 of its storage (the ETag past the redirect), still no API request',
+                gh.assetNotModified >= 1 && anonRepos.every((r) => apiOf(r, mark).length === 0) && comp('cat_tool').version === '1.0.0',
+                `${gh.assetNotModified} ${JSON.stringify(apiOf('anon/cat', mark))}`);
+            mark = seen.length;
+            return install('cat_tool').then((err) => install('tree_tool').then((err2) => [err, err2]));
+        })
+        .then((errs) => {
+            ok('anonymous: installs from a github.com release download and a codeload tarball, checked, without an API request',
+                errs.every((e) => e === null) && comp('cat_tool').status === 'installed' && comp('tree_tool').status === 'installed' &&
+                anonRepos.every((r) => apiOf(r, mark).length === 0) && webOf('anon/tree', mark).some((x) => /^codeload\./.test(x.host) && /\/tar\.gz\//.test(x.url)),
+                `${errs} ${JSON.stringify(seen.slice(mark).map((x) => `${x.host}${x.url}`))}`);
+            // a catalog naming its artifacts by their API URL, with the address's API limit spent
+            gh.anonLimited = true;
+            return install('api_tool');
+        })
+        .then(() => {
+            gh.anonLimited = false;
+            ok('rate limit: an artifact download the API refuses for it says so', comp('api_tool').error === 'GitHub limit reached. Try later or sign in.',
+                comp('api_tool').error);
+            gh.webLimited = true;
+            return u.checkSource('cat');
+        })
+        .then(() => {
+            gh.webLimited = false;
+            ok('rate limit: github.com\'s 429 says so too', src('cat').status === 'error' && src('cat').error === 'GitHub limit reached. Try later or sign in.',
+                src('cat').error);
+            // a token GitHub accepts for the repo, but whose asset downloads it refuses (a GitHub App not installed there)
+            u.tokens.add('tok-all', { login: 'tester', label: 'tester' });
+            Object.assign(gh.repos['anon/apiurl'], { forbidAssets: ['tok-all'], forbidOnly: ['api_tool@1.0.0.tgz'] });
+            gh.repos['anon/cat'].forbidAssets = ['tok-all'];
+            mark = seen.length;
+            return Promise.all([u.checkSource('apiurl'), u.checkSource('priv'), u.checkSource('cat')]);
+        })
+        .then(() => {
+            ok('token: a public repo and a private one are read with the token, through the API', rt('apiurl').tokenId && rt('priv').tokenId &&
+                src('apiurl').status === 'ok' && src('priv').status === 'ok', JSON.stringify([src('apiurl'), src('priv')]));
+            ok('token: a public repo that refuses the token on its catalog.json is read without it, from github.com',
+                src('cat').status === 'ok' && rt('cat').tokenId === null && webOf('anon/cat', mark).some((x) => /catalog\.json$/.test(x.url)),
+                JSON.stringify(src('cat')));
+            mark = seen.length;
+            return install('api_tool').then((err) => install('priv_tool').then((err2) => [err, err2]));
+        })
+        .then((errs) => {
+            const asset = seen.slice(mark).filter((x) => /\/repos\/anon\/apiurl\/releases\/assets\//.test(x.url));
+            ok('token: an artifact download that refuses the token is downloaded again without it', errs[0] === null &&
+                comp('api_tool').status === 'installed' && asset.length === 2 && asset[0].auth === 'Bearer tok-all' && asset[1].auth === null,
+                `${errs[0]} ${JSON.stringify(asset)}`);
+            ok('token: a private repo is read and installed through the API with its token alone', errs[1] === null && comp('priv_tool').status === 'installed' &&
+                webOf('anon/priv', mark).length === 0 && apiOf('anon/priv', mark).every((x) => x.auth === 'Bearer tok-all'), `${errs[1]}`);
+            ok('token: never sent anywhere but the API host', !seen.some((x) => x.auth && !/^api\.github\.com|^updates\.test/.test(x.host)));
+            let bad = null;
+            try {
+                sourcesLib.parseRefs(Buffer.from('<!DOCTYPE html>'));
+            } catch (e) {
+                bad = e.message;
+            }
+            ok('refs: an answer that is no git ref advertisement is refused', bad === 'not a git ref advertisement', bad);
+            u.server.close();
+        });
+}
+
 /* ---- run ---------------------------------------------------------------------- */
 
 function main() {
@@ -4855,6 +5163,7 @@ function main() {
             .then(() => testPythonRepo().catch((e) => ok('python repo scenario', false, e.stack)))
             .then(() => testIdClash().catch((e) => ok('id clash scenario', false, e.stack)))
             .then(() => testDefaultPrivate(certs).catch((e) => ok('default private source scenario', false, e.stack)))
+            .then(() => testAnonymous(certs).catch((e) => ok('anonymous GitHub scenario', false, e.stack)))
             .then(() => testDaemon(certs, pubDir))
             .then(() => {
                 dnsSrv.close();

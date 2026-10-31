@@ -55,7 +55,8 @@ them:
 ] }
 ```
 
-- `github`: a repo, read through the REST API (`github_api`). `https`: a
+- `github`: a repo ("GitHub without a token" below for how a public one is
+  read). `https`: a
   `catalog.json` URL, or an App Manager index (below). `file`: a local
   folder (tests, the emulator).
 - `builtin`: the Store's own source (`builtin_repo`, id `mgu-store`),
@@ -76,6 +77,26 @@ them:
   catalog is ignored.
 - A source that cannot be read keeps the components it listed last
   (`state/sources/<id>.json`).
+
+**GitHub without a token.** GitHub's REST API allows an address without
+a token 60 requests an hour, and a mobile network puts many cars behind
+one address; a 304 counts too. So a GitHub source read without a token
+uses GitHub's web hosts, which that limit does not count, and the API
+only where they do not reach:
+
+| What | From |
+|---|---|
+| a catalog release's `catalog.json` (and the icons it names) | `github.com/<repo>/releases/download/catalog/<name>` (`github_web`), asked for again with its ETag, which the redirect to the asset storage carries |
+| a branch's or tag's commit, and the default branch | the refs `github.com/<repo>.git/info/refs` advertises to git |
+| a file at a commit (`mgu-repo.json`, manifests, icons) | `raw.githubusercontent.com` (`github_raw`) |
+| a commit's tarball | `codeload.github.com` (`github_codeload`) |
+| an artifact | the URL its catalog names: a release download on `github.com` costs no API request |
+| the folders an `apps` pattern lists | the API's contents, once per new commit |
+| a releases layout's listing (no `catalog` release) | the API's releases list; the packages and `mgu-store.json` from `github.com` |
+
+A repo those hosts do not reach (not there, or private: 401 or 404) is
+read through the API as with a token. Each check's log line ends with the
+API requests it made, and an install's `verify` line with its download's.
 
 **Layouts.** A source reads as the first of these it has:
 
@@ -325,12 +346,17 @@ or not `tokens.json` names it yet; the deploy tool writes both too
 the folder again every `usb_poll_s` and on each check.
 
 - A GitHub source is read with a stored token when there is one (the
-  one that read it last first), public repos too: a token's rate limit is
-  far higher than an anonymous one. It is read without a token only when
-  every token is refused for that repo. A source no token reaches is
-  `auth-needed`; one that hits the rate limit with no usable token shows
-  `GitHub rate limit reached`. When the tokens change, the sources that
-  need one are read again.
+  one that read it last first), public repos too, through the API. It is
+  read without a token ("GitHub without a token") only when every token is
+  refused for that repo: a 401, a 404, or a 403 that is no rate limit (a
+  GitHub App's sign-in refuses a repo the App is not installed on)
+  anywhere in the read. A download refused that way (an artifact, an
+  icon, a tarball) is downloaded again without the token. A source no
+  token reaches is `auth-needed`. A request GitHub's rate limit refuses
+  (a 429, or a 403 with `x-ratelimit-remaining: 0` or `retry-after`), a
+  check's or a download's, fails with `GitHub limit reached. Try later or
+  sign in.` When the tokens change, the sources that need one are read
+  again.
 - `token-add` asks `api.github.com/user` whose the token is: `login`, and
   a classic token's `X-OAuth-Scopes` as `scopes` (a fine-grained or GitHub
   App token has none: null). One GitHub rejects (401) is refused; without
@@ -494,7 +520,8 @@ fetcher can change nothing it installs.
   the Store says so.
 - HTTPS only, Node's bundled roots (or `ca_file`). Redirects of a GET are
   followed, but request headers go to the first host only: a token never
-  reaches the storage a download redirects to. The device flow's POSTs are
+  reaches the storage a download redirects to. `User-Agent`,
+  `If-None-Match` and `If-Modified-Since` go along. The device flow's POSTs are
   not redirected.
 - The size the source states is the most that is read; API answers at
   most 4 MiB.
@@ -679,7 +706,7 @@ container's address as the hotspot's.
 `updater.conf` (in the version folder) holds the defaults;
 `/var/opt/mgu-updater/updater.local.conf` overrides any key and survives
 updates. Keys: `sources`, `credentials_dir`, `builtin_repo`, `default_sources`,
-`github_client_id`, `github_app_url`, `github_api`, `github_web`, `ca_file`,
+`github_client_id`, `github_app_url`, `github_api`, `github_web`, `github_raw`, `github_codeload`, `ca_file`,
 `check_interval_s`, `first_check_s`, `mounts`, `usb_roots`, `usb_poll_s`,
 `repo_max_bytes`, `build_uid`, `build_gid`, `build_timeout_s`,
 `build_max_bytes`, `python`, `fetch_uid`, `fetch_gid`, `lease`, `deploy`,
@@ -915,8 +942,10 @@ test/                    offline tests (test/run.sh: Node 8.16.2 in Docker)
 and `test/test_page.js`, the page's add form against a fake DOM) on
 the unit's Node 8.16.2, as root, against a local HTTPS server with its own
 CA and a DNS server that also answers for `github.com`,
-`api.github.com` and `codeload.github.com` (a fake GitHub: repos,
-releases, branches, tags, contents, tarballs, the device flow), with
+`api.github.com`, `codeload.github.com` and `raw.githubusercontent.com`
+(a fake GitHub: repos, releases, branches, tags, contents, tarballs, the
+device flow, release downloads redirected to their storage, git refs, raw
+files), with
 `test/fake_deploy.js` in the deploy tool's place:
 
 - catalogs (schema 1 and 2, a signature ignored), tar reading and packing;
@@ -940,6 +969,14 @@ releases, branches, tags, contents, tarballs, the device flow), with
   (with a stand-in page), `rid`, a first start without `sources.json`, default
   sources (added once, kept out after a removal, not doubled), and
   the Store 0.3's texts from the state;
+- public repos without a token: a catalog, a branch (on the default branch
+  HEAD names) and tags (an annotated tag at its commit) read and installed
+  with no API request, an unchanged catalog.json a 304 past the redirect,
+  the API for a releases layout's listing, a catalog.json that is no
+  catalog and a private repo; the rate limit's message for a check and an
+  artifact download (the API's 403, github.com's 429); a token refused on
+  a catalog.json (read without it) or on an artifact (downloaded again
+  without it); a private repo with its token through the API alone;
 - the uplink's requests against a fake `ctl.sock`: only with the secret,
   each sent on with its own fields only (no secret), a password passed on
   exactly and in no log line, the ones the uplink could not take refused
