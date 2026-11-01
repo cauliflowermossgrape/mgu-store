@@ -1816,10 +1816,12 @@ function privacyApplyAndBounce(state) {
     } else if ((result.changed || result.restartNeeded) && managerPid()) bounceManager();
     return { ok: true };
 }
+/* The skipped line this run printed last: a run that applies app-privacy
+ * once per app names the same skipped edits once. */
+var privacySkippedSaid = '';
 /* app-privacy's per-edit results (1.7.0 on) in one line, when it left out
  * privacy-only edits whose anchors this MainApp lacks: "11 of 12 privacy
  * edits applied; skipped: <title>, ..."; '' otherwise. */
-var privacySkippedSaid = '';
 function privacySkipped(edits) {
     if (!Array.isArray(edits)) return '';
     var privacy = edits.filter(function (e) { return e && !e.required && String(e.id).indexOf('helper:') !== 0; });
