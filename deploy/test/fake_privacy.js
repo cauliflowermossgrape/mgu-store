@@ -8,7 +8,11 @@
 // to $FAKE_PRIVACY_LOG when it is set. With $FAKE_PRIVACY_CHANGED_ONCE
 // naming a file that does not exist, apply reports changed and makes it.
 // With $FAKE_PRIVACY_WRITES_MAIN_AT "<file>:<n>", the n-th apply (counted
-// in that file) writes main.js, as a patch it applies there.
+// in that file) writes main.js, as a patch it applies there. With
+// $FAKE_PRIVACY_SKIPPED naming optional edit ids (comma-separated),
+// results carry app-privacy's per-edit list with those skipped and the
+// rest applied; with $FAKE_PRIVACY_REFUSED naming a required one, check
+// and apply without --main/--appmanagement refuse (exit 2) on it.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -56,7 +60,28 @@ if (argv[0] === 'apply' && !explicit && env.FAKE_PRIVACY_WRITES_MAIN_AT) {
         fs.utimesSync(paths.main, now, now);
     }
 }
-console.log(JSON.stringify({ version: 'fake', command: argv[0], state, changed, files, restartNeeded: false }));
+const skipped = (env.FAKE_PRIVACY_SKIPPED || '').split(',').filter(Boolean);
+const refused = explicit ? [] : (env.FAKE_PRIVACY_REFUSED || '').split(',').filter(Boolean);
+let edits;
+if (skipped.length || refused.length) {
+    edits = [{ id: 'helper:CorruptAppsHandler', required: true }, { id: 'crash-gate', required: true },
+        { id: 'backend-inventory', required: false }, { id: 'diag-entries', required: false }]
+        .concat(skipped.concat(refused).filter((id) => !/^(crash-gate|backend-inventory|diag-entries)$/.test(id))
+            .map((id) => ({ id, required: refused.indexOf(id) >= 0 })))
+        .map((e) => Object.assign(e, { title: e.id.replace(/-/g, ' '), file: 'main', expected: 1,
+            found: skipped.indexOf(e.id) >= 0 || refused.indexOf(e.id) >= 0 ? 0 : 1,
+            result: refused.indexOf(e.id) >= 0 ? 'refused-not-found' : skipped.indexOf(e.id) >= 0 ? 'skipped-not-found' :
+                refused.length && argv[0] !== 'check' ? 'not-applied' : 'applied' }));
+}
+if (refused.length && argv[0] !== 'revert') {
+    files[0].problems = refused.map((id) => 'anchor "' + id + '...": 0 occurrence(s), expected 1 (required ' + id + ')');
+    files[0].state = null;
+    console.log(JSON.stringify({ version: 'fake', command: argv[0], state: 'mismatch', changed: false, files, edits,
+        mainapp: null, restartNeeded: false }));
+    process.exit(2);
+}
+console.log(JSON.stringify({ version: 'fake', command: argv[0], state, changed, files, restartNeeded: false,
+    edits, skipped: edits ? skipped : undefined }));
 if (argv[0] === 'apply' && !explicit && env.FAKE_PRIVACY_APPLY_EXIT) {
     process.exitCode = Number(env.FAKE_PRIVACY_APPLY_EXIT);
 }
