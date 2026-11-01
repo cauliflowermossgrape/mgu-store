@@ -6,8 +6,8 @@ on the head unit) enumerates every app in its registry in several off-car
 paths; the patch in this directory makes each of them skip local-only
 apps. It also makes MainApp only restart a local-only app that crashed.
 Genuine backend-delivered apps are reported, updated, diagnosed and
-recovered exactly as before. It covers iDrive 7's MainApp 8.3.2 and
-8.1.1 (`/usr/lib/oap-mainapp`) and iDrive 8's MainApp-21 9.3.4 and
+recovered exactly as before. It covers iDrive 7's MainApp 8.3.2,
+8.2.10 and 8.1.1 (`/usr/lib/oap-mainapp`) and iDrive 8's MainApp-21 9.3.4 and
 9.2.15 (`/usr/lib/oap-mainapp21`).
 
 ## Which apps are local-only
@@ -40,7 +40,8 @@ without the marker. Installers do not maintain it.
 All sites are in `/usr/lib/oap-mainapp/src/main.js` and
 `/usr/lib/oap-mainapp/src/AppManagement/AppManagement.js`. MainApp 8.1.1
 has no platform analytics, no `getAvailableUpdatesFromBackend` sweep and no
-`DiagOapProvider`, so those rows apply to 8.3.2 only.
+`DiagOapProvider`, so those rows apply to 8.3.2 and 8.2.10 only. MainApp
+8.2.10's update-availability sweep is `AppsAutoupdater._areUpdatesAvailable`.
 
 | Path | Site |
 |---|---|
@@ -134,7 +135,7 @@ remounted read-write for the write only; a file bind-mounted over a bundle
 path is written in place. With `--json`, the last stdout line is
 `{"version","command","state","changed","files":[...],"restartNeeded","unit","mainapp"}`;
 `mainapp` names the MainApp release whose edits the bundles take (`8.3.2`,
-`8.1.1`, on iDrive 8 `9.3.4`, `9.2.15`; null on a mismatch). On iDrive 8 `changed` and `restartNeeded` are always false, since
+`8.2.10`, `8.1.1`, on iDrive 8 `9.3.4`, `9.2.15`; null on a mismatch). On iDrive 8 `changed` and `restartNeeded` are always false, since
 MainApp-21 is not to be bounced for this patch, whoever runs the tool;
 `nextStart` is true while the running MainApp-21 has not loaded the
 bundles as they are now.
@@ -167,4 +168,6 @@ node native/app-privacy/patch_mainapp.js check-apps apps
 
 Set `FIRMWARE_MAINAPP_DIR` to a decoded oap-mainapp folder to also test
 against its bundles; `run.sh` passes it into the container.
-`FIRMWARE_MAINAPP21_DIR` does the same with a decoded MainApp-21 (9.3.4 or 9.2.15).
+`FIRMWARE_MAINAPP21_DIR` does the same with a decoded MainApp-21 (9.3.4 or 9.2.15),
+`FIRMWARE_MAINAPP_8_1_1_DIR` and `FIRMWARE_MAINAPP_8_2_10_DIR` with a decoded
+oap-mainapp 8.1.1 or 8.2.10.

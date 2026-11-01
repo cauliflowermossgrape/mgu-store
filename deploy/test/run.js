@@ -288,7 +288,7 @@ function fakeRoot(opts) {
         mainAppSourceFolder: '/usr/lib/oap-mainapp/',
         appManagement: { ignoreSignatureFailure: false }
     }, null, 2) + '\n');
-    // opts.mainapp811: MainApp 8.1.1, whose AppManagement.js names no installationSource
+    // opts.mainapp811: MainApp 8.1.1 or 8.2.10, whose AppManagement.js names no installationSource
     if (opts.mainapp811) write(p('usr/lib/oap-mainapp/src/AppManagement/AppManagement.js'), 'class AppManager{}\n');
     write(p('usr/lib/oap-mainapp/preinstalled_apps/stock_app@2.0.0.tgz'), 'stock package\n');
     write(p(`var/opt/public/oap/oap_${MGR}/data/apps/stock_app.json`), JSON.stringify({ userId: 13000,
@@ -1314,19 +1314,20 @@ function testCertCopy() {
         ltext.includes('let handle=certmgr.useKeychain(keyChainPath,(state,_chain)=>{__mgu.states.length<30&&'), lr.out);
 }
 
-/* MainApp 8.1.1: its AppManagement.js names no installationSource; its
- * installs and updates record none, and its start updates no app. */
+/* MainApp 8.1.1 and 8.2.10: their AppManagement.js names no
+ * installationSource; their installs and updates record none, and their
+ * start updates no app. 8.2.10's main.js has the fixture's anchors. */
 function testMainApp811() {
     const { root, first, mgr } = inplaceRoot(undefined, { mainapp811: true });
-    check('MainApp 8.1.1: a fresh install through a bounce is done without an installationSource', first.status === 0 &&
+    check('MainApp 8.1.1 and 8.2.10: a fresh install through a bounce is done without an installationSource', first.status === 0 &&
         first.out.includes('fixture_app 1.0.0 installed by the app manager as uid 13001 (source not recorded)') &&
         !('installationSource' in readJson(root.entry('fixture_app'))), first.out);
     const fresh = root.run(['install', '--artifact', appArtifact('second_app', '1.0.0', true), '--yes']);
-    check('MainApp 8.1.1: a fresh install in place, no bounce', fresh.status === 0 && root.kills().length === 1 &&
+    check('MainApp 8.1.1 and 8.2.10: a fresh install in place, no bounce', fresh.status === 0 && root.kills().length === 1 &&
         fresh.out.includes(`installed in place by the app manager (pid ${mgr.pid}) as uid 13002 (source not recorded)`),
     `${fresh.out}\n${root.managerLog().join('\n')}`);
     const up = root.run(['install', '--artifact', appArtifact('fixture_app', '1.1.0', true), '--yes']);
-    check('MainApp 8.1.1: an update in place, uid kept, no re-seed, no bounce', up.status === 0 && root.kills().length === 1 &&
+    check('MainApp 8.1.1 and 8.2.10: an update in place, uid kept, no re-seed, no bounce', up.status === 0 && root.kills().length === 1 &&
         up.out.includes('updated in place') && !up.out.includes('re-seeded') &&
         readJson(path.join(root.home(13001), 'source/package.json')).version === '1.1.0', `${up.out}\n${root.managerLog().join('\n')}`);
 
@@ -1343,7 +1344,7 @@ function testMainApp811() {
     const log = b.managerLog();
     let killAt = -1;
     log.forEach((l, i) => { if (l.startsWith('kill ')) killAt = i; });
-    check('MainApp 8.1.1: an update through a bounce is made in place by the restarted manager, no re-seed',
+    check('MainApp 8.1.1 and 8.2.10: an update through a bounce is made in place by the restarted manager, no re-seed',
         r.status === 0 && b.kills().length === k0 + 1 && r.out.includes('through a bounce') && r.out.includes('updated in place') &&
         !r.out.includes('re-seeded') && killAt >= 0 && log.indexOf('update fixture_app 1.1.0 uid 13001 in place') > killAt &&
         !('installationSource' in readJson(b.entry('fixture_app'))), `${r.out}\n${log.join('\n')}`);
@@ -1354,7 +1355,7 @@ function testMainApp811() {
     const fk = f.kills().length;
     const fr = f.run(['install', '--artifact', appArtifact('fixture_app', '1.1.0', true), '--yes'],
         { FAKE_MGR_HOOK: '1', FAKE_INPLACE: 'fail' });
-    check('MainApp 8.1.1: an update the restarted manager fails is reported, one bounce',
+    check('MainApp 8.1.1 and 8.2.10: an update the restarted manager fails is reported, one bounce',
         fr.status !== 0 && fr.out.includes('the app manager could not update fixture_app 1.1.0 after its restart') &&
         f.kills().length >= fk + 1, fr.out);
     stopHooked(f);

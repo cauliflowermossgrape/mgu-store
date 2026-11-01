@@ -50,7 +50,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 const MARKER_KEY = 'mguLocalOnly';
 const OAP_ROOT = '/var/opt/public/oap/';
 const OVERRIDE_FILE = OAP_ROOT + 'oap_12201/data/local-only-apps.json';
@@ -282,6 +282,19 @@ const MAIN_PATCHES_8_1_1 = [
 ];
 const PATCH_SETS_8_1_1 = { main: MAIN_PATCHES_8_1_1, appmanagement: APPMANAGEMENT_PATCHES_1_4_0.concat([certEdit(1)]) };
 
+// oap-mainapp 8.2.10. Its update-availability sweep is
+// AppsAutoupdater._areUpdatesAvailable, which reads the registry as
+// this._appRegistry; its other edits are 8.3.2's.
+const KNOWN_SHA256_8_2_10 = {
+    main: 'b56f499d944ff1f9cab5a81f9af8bfb641d1e710fca007f0f7c3a63c2c5af12f',
+    appmanagement: '21d8d9a9054860e5e3ec4b2233e73e84bba7b7526c1b654c1f86b8e98cd4884e'
+};
+const PATCH_SETS_8_2_10 = {
+    main: MAIN_PATCHES.map((p) => p[0] === 'this.appRegistry.getAll(),app=>{const appId' ?
+        ins('this._appRegistry.getAll()', KEEP_APP, ',app=>{const appId', 1) : p),
+    appmanagement: APPMANAGEMENT_PATCHES
+};
+
 // MainApp-21 (iDrive 8). Its predicate decides an app MainApp-21 is
 // installing by MainApp-21's own preinstalled_apps; registry, app folders
 // and override list are where iDrive 7 has them.
@@ -406,6 +419,7 @@ function bundlePaths(root) {
 const UNITS = {
     ID7: { paths: DEFAULT_PATHS, mainapps: [
         { version: '8.3.2', sets: { current: PATCH_SETS, earlier: EARLIER_PATCH_SETS }, known: KNOWN_SHA256 },
+        { version: '8.2.10', sets: { current: PATCH_SETS_8_2_10, earlier: [] }, known: KNOWN_SHA256_8_2_10 },
         { version: '8.1.1', sets: { current: PATCH_SETS_8_1_1, earlier: [] }, known: KNOWN_SHA256_8_1_1 }
     ] },
     ID8: { paths: bundlePaths('/usr/lib/oap-mainapp21'), mainapps: [
@@ -993,7 +1007,7 @@ function main(argv) {
 
 module.exports = {
     VERSION, MARKER_KEY, OVERRIDE_FILE, PREINSTALLED_DIR, HELPER_JS, PATCH_SETS, EARLIER_PATCH_SETS, KNOWN_SHA256,
-    PATCH_SETS_8_1_1, KNOWN_SHA256_8_1_1, PREINSTALLED_DIR_21, HELPER_JS_21, PATCH_SETS_21, KNOWN_SHA256_21,
+    PATCH_SETS_8_1_1, KNOWN_SHA256_8_1_1, PATCH_SETS_8_2_10, KNOWN_SHA256_8_2_10, PREINSTALLED_DIR_21, HELPER_JS_21, PATCH_SETS_21, KNOWN_SHA256_21,
     PATCH_SETS_21_9_2_15, KNOWN_SHA256_21_9_2_15,
     UNITS, unitOf,
     classify, applyPatches, removePatches, run, stampPackage, checkApps, main

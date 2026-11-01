@@ -6,7 +6,8 @@
  * The firmware cases run when a decoded oap-mainapp is available
  * (FIRMWARE_MAINAPP_DIR names iDrive 7's folder, FIRMWARE_MAINAPP21_DIR
  * iDrive 8's MainApp-21, 9.3.4 or 9.2.15, FIRMWARE_MAINAPP_8_1_1_DIR
- * iDrive 7's MainApp 8.1.1); each is skipped otherwise.
+ * iDrive 7's MainApp 8.1.1, FIRMWARE_MAINAPP_8_2_10_DIR its 8.2.10); each
+ * is skipped otherwise.
  */
 const assert = require('assert');
 const childProcess = require('child_process');
@@ -288,6 +289,21 @@ test('the MainApp 8.1.1 patch set is recorded', () => {
         '(its UNITS.ID7.mainapps entry\'s sets.earlier) and bump the version; then record ' + sha + ' here');
 });
 
+// sha256 of JSON.stringify(PATCH_SETS_8_2_10) as shipped by 1.6.2, and of
+// MainApp 8.2.10's bundles as it patches them.
+const PATCH_SETS_8_2_10_SHA256 = '2b4e63cebdc4dbb4c86f1f1330177f51f58de6bfab9f17931ea2c9ce4fd5ec22';
+const PATCHED_8_2_10_SHA256 = {
+    main: '07dcae1d88382325e752066c4b96a22c0d0c488c32eac646c6f681bb8eed3b3a',
+    appmanagement: '2c430e9adbb0035998331c5b1c8431ee28d72b91735848eb98ef91c9889df4ba'
+};
+
+test('the MainApp 8.2.10 patch set is recorded', () => {
+    const sha = setsSha(patcher.PATCH_SETS_8_2_10);
+    assert.strictEqual(sha, PATCH_SETS_8_2_10_SHA256,
+        'PATCH_SETS_8_2_10 differs from the released one: keep the released sets as 8.2.10\'s earlier release ' +
+        '(its UNITS.ID7.mainapps entry\'s sets.earlier) and bump the version; then record ' + sha + ' here');
+});
+
 // sha256 of JSON.stringify(PATCH_SETS_21_9_2_15) as shipped by 1.6.1, and of
 // MainApp-21 9.2.15's bundles as it patches them.
 const PATCH_SETS_21_9_2_15_SHA256 = '9ada4eaecdba9320ee00d699758d84960e59bee09a1b37aca29c0cb1d4cdc03f';
@@ -321,9 +337,10 @@ function withReleaseBundles(unit, sets, fn) {
 }
 
 test('bundles take the edits of the MainApp release they fit', () => {
-    assert.deepStrictEqual(patcher.UNITS.ID7.mainapps.map((m) => m.version), ['8.3.2', '8.1.1']);
+    assert.deepStrictEqual(patcher.UNITS.ID7.mainapps.map((m) => m.version), ['8.3.2', '8.2.10', '8.1.1']);
     assert.deepStrictEqual(patcher.UNITS.ID8.mainapps.map((m) => m.version), ['9.3.4', '9.2.15']);
-    [['ID7', patcher.PATCH_SETS, '8.3.2'], ['ID7', patcher.PATCH_SETS_8_1_1, '8.1.1'], ['ID8', patcher.PATCH_SETS_21, '9.3.4'],
+    [['ID7', patcher.PATCH_SETS, '8.3.2'], ['ID7', patcher.PATCH_SETS_8_2_10, '8.2.10'],
+        ['ID7', patcher.PATCH_SETS_8_1_1, '8.1.1'], ['ID8', patcher.PATCH_SETS_21, '9.3.4'],
         ['ID8', patcher.PATCH_SETS_21_9_2_15, '9.2.15']].forEach((release) => withReleaseBundles(release[0], release[1], (b) => {
         const stock = { main: b.read('main'), appmanagement: b.read('appmanagement') };
         let r = runTool(b.args('check'));
@@ -341,14 +358,21 @@ test('bundles take the edits of the MainApp release they fit', () => {
     }));
 });
 
+// 8.2.10's AppManagement.js edits are 8.3.2's: its main.js tells them apart.
 test('each iDrive 7 release\'s edits fit only its own bundles', () => {
-    const sets = { '8.3.2': patcher.PATCH_SETS, '8.1.1': patcher.PATCH_SETS_8_1_1 };
+    const sets = { '8.3.2': patcher.PATCH_SETS, '8.2.10': patcher.PATCH_SETS_8_2_10, '8.1.1': patcher.PATCH_SETS_8_1_1 };
     Object.keys(sets).forEach((mine) => Object.keys(sets).filter((other) => other !== mine).forEach((other) => {
-        ['main', 'appmanagement'].forEach((kind) => {
-            const stock = syntheticBundle(sets[mine][kind]);
-            assert.ok(Array.isArray(patcher.classify(stock, sets[other][kind])), mine + ' ' + kind + ' fits ' + other);
-            assert.ok(Array.isArray(patcher.classify(patcher.applyPatches(stock, sets[mine][kind]), sets[other][kind])),
-                mine + ' ' + kind + ' patched fits ' + other);
+        [false, true].forEach((patched) => {
+            const refused = ['main', 'appmanagement'].filter((kind) => {
+                const stock = syntheticBundle(sets[mine][kind]);
+                return Array.isArray(patcher.classify(patched ? patcher.applyPatches(stock, sets[mine][kind]) : stock,
+                    sets[other][kind]));
+            });
+            assert.ok(refused.indexOf('main') >= 0, mine + (patched ? ' patched' : '') + ' main.js fits ' + other);
+            if (JSON.stringify(sets[mine].appmanagement) !== JSON.stringify(sets[other].appmanagement)) {
+                assert.ok(refused.indexOf('appmanagement') >= 0,
+                    mine + (patched ? ' patched' : '') + ' AppManagement.js fits ' + other);
+            }
         });
     }));
 });
@@ -1378,10 +1402,11 @@ test('MainApp-21 reference bundles patch, parse and revert exactly', () => {
     return null;
 });
 
-test('MainApp 8.1.1 bundles patch, parse and revert exactly', () => {
-    const root = process.env.FIRMWARE_MAINAPP_8_1_1_DIR;
+/* A decoded iDrive 7 MainApp release's bundles patch to the recorded
+ * output, take that release's edits, parse and revert exactly. */
+function releaseFirmware(root, version, sets, patchedSha) {
     if (!root || !fs.existsSync(path.join(root, 'src', 'main.js'))) {
-        return 'skipped: decoded oap-mainapp 8.1.1 not available';
+        return 'skipped: decoded oap-mainapp ' + version + ' not available';
     }
     const dir = tmpdir();
     try {
@@ -1392,14 +1417,14 @@ test('MainApp 8.1.1 bundles patch, parse and revert exactly', () => {
         };
         Object.keys(paths).forEach((kind) => {
             fs.writeFileSync(paths[kind], stock[kind]);
-            const patched = patcher.applyPatches(stock[kind], patcher.PATCH_SETS_8_1_1[kind]);
-            assert.strictEqual(sha256(patched), PATCHED_8_1_1_SHA256[kind], kind + ': the edits differ from the released ones');
+            const patched = patcher.applyPatches(stock[kind], sets[kind]);
+            assert.strictEqual(sha256(patched), patchedSha[kind], kind + ': the edits differ from the released ones');
             helperPerModule(patched);
         });
         const args = ['--json', '--unit', 'ID7', '--main', paths.main, '--appmanagement', paths.appmanagement];
         let r = runTool(['check'].concat(args));
         assert.strictEqual(r.code, 1, r.stdout);
-        assert.strictEqual(lastJson(r.stdout).mainapp, '8.1.1');
+        assert.strictEqual(lastJson(r.stdout).mainapp, version);
         lastJson(r.stdout).files.forEach((f) => assert.strictEqual(f.reference, true));
         r = runTool(['apply'].concat(args));
         assert.strictEqual(r.code, 0, r.stdout);
@@ -1413,7 +1438,13 @@ test('MainApp 8.1.1 bundles patch, parse and revert exactly', () => {
         rmrf(dir);
     }
     return null;
-});
+}
+
+test('MainApp 8.1.1 bundles patch, parse and revert exactly', () =>
+    releaseFirmware(process.env.FIRMWARE_MAINAPP_8_1_1_DIR, '8.1.1', patcher.PATCH_SETS_8_1_1, PATCHED_8_1_1_SHA256));
+
+test('MainApp 8.2.10 bundles patch, parse and revert exactly', () =>
+    releaseFirmware(process.env.FIRMWARE_MAINAPP_8_2_10_DIR, '8.2.10', patcher.PATCH_SETS_8_2_10, PATCHED_8_2_10_SHA256));
 
 let failed = 0;
 tests.reduce((p, t) => p.then(() => t.fn()).then((note) => {
