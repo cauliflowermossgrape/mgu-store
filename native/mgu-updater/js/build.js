@@ -33,10 +33,13 @@ const MAX_LOG_LINES = 2000;
 
 /* node -e COPY_OUTPUT <from> <to> <max bytes>: copies a regular file of at
  * most that size, opened without following a link and without blocking (a
- * FIFO is no file). */
+ * FIFO is no file), to a new file beside <to> that then replaces whatever
+ * the build left at <to>. */
 const COPY_OUTPUT = `
 const fs = require('fs');
+const path = require('path');
 const [from, to, max] = process.argv.slice(1);
+const part = path.join(path.dirname(to), '.' + path.basename(to) + '.' + process.pid + '.part');
 let fd;
 try {
     fd = fs.openSync(from, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
@@ -50,7 +53,7 @@ if (!st.isFile() || st.size > Number(max)) {
     process.exit(1);
 }
 try {
-    const outFd = fs.openSync(to, 'wx', 0o644);
+    const outFd = fs.openSync(part, 'wx', 0o644);
     const buf = Buffer.alloc(1 << 20);
     let total = 0;
     for (;;) {
@@ -61,6 +64,7 @@ try {
         for (let off = 0; off < n;) off += fs.writeSync(outFd, buf, off, n - off);
     }
     fs.closeSync(outFd);
+    fs.renameSync(part, to);
 } catch (e) {
     process.stderr.write('cannot copy it (' + (e.code || e.message) + ')');
     process.exit(1);

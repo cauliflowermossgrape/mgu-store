@@ -1091,6 +1091,17 @@ answer comes and the install fails at the keychain. iDrive 8's MainApp-21
 installs the same way, and its packages get the entry too. A package with
 no manifest is left as it is.
 
+**Interfaces the head unit lacks.** MainApp makes those permissions from
+its interface database, the firmware's
+`/etc/oap/someip/someip-interfaces.json`, and refuses an app whose manifest
+names an interface the database does not hold (`IFConfigGenerator::generate()
+Interface … not found`). Older iDrive 7 firmware holds fewer interfaces: no
+iDrive 8 HMI interfaces (`hmi.entrypoint2`, `hmi.remote2`,
+`hmi.resourcemanagement2`, `oap.PrivateEntryPoint2`). On iDrive 7 a package
+whose manifest names such interfaces, as proxies or services, is prepared
+with them taken out, and the output names them; the certification service
+stays. iDrive 8 installs the manifest as it is.
+
 **Interrupted installs.** Each app install is recorded in `state.json`
 until it finishes or is rolled back: `inflight` names the app and the run,
 `placed` the version and checksum of the package placed, kept while what
@@ -1177,6 +1188,8 @@ An OAP package from another repository installs as it is published:
 - its SOME/IP manifest gets `de.bmw.infotainment.certification.Certification`
   (`"*"`) when it lacks it: without it the install fails at the app's
   keychain (the certification service, above);
+- on iDrive 7, the interfaces its SOME/IP manifest names and the head
+  unit's interface database lacks are taken out (above);
 - when its own javascript calls `require('oap-sdk')` (a browserify bundle
   resolves its requires itself) and it has no `node_modules/oap-sdk`, that
   module is generated from the first donor holding the oap-sdk core
@@ -1194,8 +1207,9 @@ An OAP package from another repository installs as it is published:
 
 The prepared package is checked again as an app, then installed. Our own
 flat, marked packages are installed byte for byte when their SOME/IP
-manifest names the certification service or they have none; otherwise
-they are prepared with the entry added. A package that needs
+manifest names the certification service and, on iDrive 7, no interface
+the head unit lacks, or they have none; otherwise they are prepared as
+above. A package that needs
 the oap-sdk on a unit with no donor is refused (exit 2, nothing changed).
 
 `sdk-donor [--json]` copies the bundle module mode takes the oap-sdk from to

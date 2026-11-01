@@ -45,14 +45,17 @@
  * is a separate implementation.
  *
  *   const link = require('<repo>/tools/oap_link.js');
- *   link.build(srcDir, outFile, { donors: [path...], epoch })  -> { file, donor, moduleCount, bytes, certification }
+ *   link.build(srcDir, outFile, { donors: [path...], epoch, interfaces })
+ *                                                              -> { file, donor, moduleCount, bytes, certification, unknown }
  *   link.packSource(appDir, outFile)                           -> the packed paths
- *   link.preparePackage(pkgDir, outFile, { donors })           -> { file, sdk: null | { donor, api }, shrinkwrap,
- *                                                                 permissions, certification }
+ *   link.preparePackage(pkgDir, outFile, { donors, interfaces }) -> { file, sdk: null | { donor, api }, shrinkwrap,
+ *                                                                 permissions, certification, unknown }
  *   link.needsSdk(pkgDir)                                      -> whether preparePackage generates oap-sdk
  *   link.needsCertification(pkgDir)                            -> whether its SOME/IP manifest lacks the certification service
  *   link.completePermissions(pkgDir)                           -> the ACL tables added to permissions.json
  *   link.completeCertification(pkgDir)                         -> the SOME/IP manifest the certification service was added to, or null
+ *   link.unknownInterfaces(pkgDir, known)                      -> the interfaces its SOME/IP manifest names that known lacks
+ *   link.dropUnknownInterfaces(pkgDir, known)                  -> null | { manifest, dropped }: those taken out of it
  *   link.sdkModule(donors)                                     -> module mode's donor and the oap-sdk module made from it
  *   link.unitDonors(mainappDir, oapDir, opts)                   -> the head unit's donors, in search order
  */
@@ -649,7 +652,9 @@ function nodeCheck(file) {
  * lists donor files in search order; opts.epoch (seconds) is build.json's
  * buildTimestamp, the time of the build without it. The certification
  * proxy the tree's SOME/IP manifest lacks is added; `certification` names
- * that manifest when the package carries it. */
+ * that manifest when the package carries it. With opts.interfaces (the
+ * unit's interface ids), the interfaces the manifest names and the unit
+ * lacks are taken out; `unknown` is dropUnknownInterfaces' answer. */
 function build(srcDir, outFile, opts) {
     opts = opts || {};
     const m = readManifest(srcDir);
@@ -681,6 +686,7 @@ function build(srcDir, outFile, opts) {
             fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + (/\n$/.test(raw) ? '\n' : ''));
         }
         const completed = completeCertification(work);
+        const unknown = dropUnknownInterfaces(work, opts.interfaces || null);
         const moduleCount = donor.closure.length + modules.length;
         fs.writeFileSync(path.join(work, 'javascript', 'build.json'), JSON.stringify({
             name: m.id,
@@ -692,7 +698,7 @@ function build(srcDir, outFile, opts) {
         const packed = pack(work, outFile);
         const certification = completed && packed.indexOf(completed.split(path.sep).join('/')) >= 0 ? completed : null;
         return { file: outFile, id: m.id, version: m.version, donor: donor.label, entry, moduleCount,
-            bytes: Buffer.byteLength(bundle), certification };
+            bytes: Buffer.byteLength(bundle), certification, unknown };
     } finally {
         rmrf(work);
     }
@@ -799,9 +805,10 @@ function someipManifestFile(pkgDir) {
     const file = path.resolve(pkgDir, name);
     return file.indexOf(path.resolve(pkgDir) + path.sep) === 0 ? file : null;
 }
-/* The manifest object when it lacks the certification proxy, else null (no
- * manifest, one that does not parse, or one that names it). */
-function certificationMissing(pkgDir) {
+const isMap = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/* The SOME/IP manifest as { file, manifest }, or null: no manifest, one
+ * that does not parse, or one whose proxies are not an object. */
+function readSomeipManifest(pkgDir) {
     const file = someipManifestFile(pkgDir);
     let m;
     try {
@@ -809,11 +816,16 @@ function certificationMissing(pkgDir) {
     } catch (e) {
         return null;
     }
-    if (!m || typeof m !== 'object' || Array.isArray(m) || (m.proxies !== undefined &&
-            (!m.proxies || typeof m.proxies !== 'object' || Array.isArray(m.proxies)))) {
+    if (!m || typeof m !== 'object' || Array.isArray(m) || !(m.proxies === undefined || isMap(m.proxies))) {
         return null;
     }
-    return m.proxies && CERTIFICATION in m.proxies ? null : { file, manifest: m };
+    return { file, manifest: m };
+}
+/* The manifest object when it lacks the certification proxy, else null (no
+ * manifest, one that does not parse, or one that names it). */
+function certificationMissing(pkgDir) {
+    const r = readSomeipManifest(pkgDir);
+    return !r || (r.manifest.proxies && CERTIFICATION in r.manifest.proxies) ? null : r;
 }
 function needsCertification(pkgDir) {
     return certificationMissing(pkgDir) !== null;
@@ -830,13 +842,47 @@ function completeCertification(pkgDir) {
     return path.relative(pkgDir, miss.file);
 }
 
+/* MainApp installs an app only when its interface database (the firmware's
+ * /etc/oap/someip/someip-interfaces.json on iDrive 7) holds every interface
+ * the app's SOME/IP manifest names, as a proxy or a service; older firmware
+ * holds fewer. known lists the database's interface ids. The interfaces the
+ * manifest names that known lacks, the certification service aside (the
+ * install needs it); none when known is null or there is no manifest. */
+function unknownInterfaces(pkgDir, known) {
+    const r = known ? readSomeipManifest(pkgDir) : null;
+    if (!r) {
+        return [];
+    }
+    const has = new Set(known);
+    const ids = ['proxies', 'services'].reduce((all, k) => all.concat(isMap(r.manifest[k]) ? Object.keys(r.manifest[k]) : []), []);
+    return ids.filter((id, i) => id !== CERTIFICATION && !has.has(id) && ids.indexOf(id) === i);
+}
+/* Takes the interfaces unknownInterfaces names out of the manifest's proxies
+ * and services; returns { manifest: its name, dropped: [id...] }, or null
+ * when there is none to take out. */
+function dropUnknownInterfaces(pkgDir, known) {
+    const dropped = unknownInterfaces(pkgDir, known);
+    if (!dropped.length) {
+        return null;
+    }
+    const r = readSomeipManifest(pkgDir);
+    ['proxies', 'services'].forEach((k) => {
+        if (isMap(r.manifest[k])) {
+            dropped.forEach((id) => delete r.manifest[k][id]);
+        }
+    });
+    fs.writeFileSync(r.file, JSON.stringify(r.manifest, null, 2) + '\n');
+    return { manifest: path.relative(pkgDir, r.file), dropped };
+}
+
 /* An OAP package folder (pkgDir is changed) as the flat tgz the head unit
  * installs: "mguLocalOnly": true in its package.json, node_modules/oap-sdk
  * generated when needsSdk(), an npm-shrinkwrap.json without dependencies
  * when needsShrinkwrap() (the package carries what it runs on; nothing is
  * fetched from npm), the ACL tables permissions.json lacks added empty, the
- * certification proxy its SOME/IP manifest lacks added, and every file
- * packed (tools/oap_pack.js format). An oap-sdk the package ships stays as
+ * certification proxy its SOME/IP manifest lacks added, the interfaces it
+ * names that opts.interfaces (the unit's interface ids) lacks taken out,
+ * and every file packed (tools/oap_pack.js format). An oap-sdk the package ships stays as
  * it is. */
 function preparePackage(pkgDir, outFile, opts) {
     opts = opts || {};
@@ -862,10 +908,11 @@ function preparePackage(pkgDir, outFile, opts) {
     }
     const permissions = completePermissions(pkgDir);
     const certification = completeCertification(pkgDir);
+    const unknown = dropUnknownInterfaces(pkgDir, opts.interfaces || null);
     stampPackage(pkgDir);
     fs.writeFileSync(outFile, tgz(filesBelow(pkgDir).map((name) =>
         ({ name, data: fs.readFileSync(path.join(pkgDir, name)), mode: 0o644 })), MTIME));
-    return { file: outFile, sdk, shrinkwrap, permissions, certification };
+    return { file: outFile, sdk, shrinkwrap, permissions, certification, unknown };
 }
 
 function rmrf(p) {
@@ -884,6 +931,7 @@ function rmrf(p) {
 }
 
 module.exports = { build, packSource, readManifest, preparePackage, completePermissions, completeCertification,
+    unknownInterfaces, dropUnknownInterfaces,
     needsCertification, needsSdk, needsShrinkwrap, sdkModule, unitDonors, untar, SDK_API, ENTRY_ID,
     LOADER };
 

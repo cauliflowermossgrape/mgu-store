@@ -1463,6 +1463,73 @@ function testCertificationProxy() {
         fs.readFileSync(flat8.p('var/opt/mgu-deploy/id8/queue/has8@1.0.0.tgz')).equals(fs.readFileSync(has8)), h8.out);
 }
 
+/* Interfaces the app's SOME/IP manifest names and the unit's interface database lacks (older iDrive 7
+ * firmware): taken out, so MainApp installs the app. */
+function testUnknownInterfaces() {
+    const EP = 'de.bmw.infotainment.hmi.entrypoint.EntryPoint', EP2 = 'de.bmw.infotainment.hmi.entrypoint2.EntryPoint2';
+    const CERT = 'de.bmw.infotainment.certification.Certification', STATUS = 'de.bmw.infotainment.telematic.oap.AppStatus';
+    const CTX2 = 'de.bmw.infotainment.hmi.hmicontext2.HMIContext2';
+    const manifest = { proxies: { [CERT]: '*', [EP]: '*', [EP2]: '*', [CTX2]: { instances: ['1'] } },
+        services: { [STATUS]: { instances: ['${userId}'] } } };
+    const withDb = (root, ids) => write(root.p('etc/oap/someip/someip-interfaces.json'),
+        JSON.stringify({ version: 1, interfaces: ids.reduce((o, id) => Object.assign(o, { [id]: { serviceId: 1 } }), {}) }));
+    const flat = (name) => {
+        const file = path.join(fs.mkdtempSync(path.join(T, 'app-')), `${name}@1.0.0.tgz`);
+        fs.writeFileSync(file, tgz([
+            { name: 'javascript/app.js', data: Buffer.from('console.log(1);\n'), mode: 0o644 },
+            { name: 'manifest.json', data: Buffer.from(JSON.stringify(manifest)), mode: 0o644 },
+            { name: 'package.json', data: Buffer.from(JSON.stringify({ name, version: '1.0.0', description: 'deploy test app',
+                mguLocalOnly: true })), mode: 0o644 }], 1700000000));
+        return file;
+    };
+    const installed = (root, id) => readJson(path.join(root.home(readJson(root.entry(id)).userId), 'source', 'manifest.json'));
+    const old = fakeRoot();
+    withDb(old, [EP, CTX2]);
+    const r = old.run(['install', '--artifact', flat('old_fw'), '--yes']);
+    const m = r.status === 0 ? installed(old, 'old_fw') : { proxies: {}, services: {} };
+    check('interfaces: those the unit lacks are taken out of a published package\'s manifest, the rest kept',
+        r.status === 0 && r.out.includes(`${EP2}, ${STATUS} (not on this unit) taken out of manifest.json`) &&
+        JSON.stringify(Object.keys(m.proxies)) === JSON.stringify([CERT, EP, CTX2]) &&
+        JSON.stringify(m.services) === '{}', r.out);
+    const cur = fakeRoot();
+    withDb(cur, [EP, EP2, CTX2, STATUS]);
+    const c = cur.run(['install', '--artifact', flat('cur_fw'), '--yes']);
+    check('interfaces: a package whose interfaces the unit all has installs as published',
+        c.status === 0 && !c.out.includes('prepared cur_fw') &&
+        JSON.stringify(installed(cur, 'cur_fw')) === JSON.stringify(manifest), c.out);
+    const none = fakeRoot();
+    const n = none.run(['install', '--artifact', flat('no_db'), '--yes']);
+    check('interfaces: without an interface database the manifest is kept', n.status === 0 && !n.out.includes('prepared no_db') &&
+        JSON.stringify(installed(none, 'no_db')) === JSON.stringify(manifest), n.out);
+    const src = donorRoot();
+    withDb(src, [EP]);
+    const s = src.run(['install', '--artifact', sourceArtifact('1.0.0', {}, { 'manifest.json': JSON.stringify(manifest) }), '--yes']);
+    const sm = s.status === 0 ? JSON.parse(untarBuf(fs.readFileSync(src.preinstalled('robertn_demo', '1.0.0')))['manifest.json']) :
+        { proxies: {} };
+    check('interfaces: a source package is built without those the unit lacks', s.status === 0 &&
+        s.out.includes(`${EP2}, ${CTX2}, ${STATUS} (not on this unit) taken out of manifest.json`) &&
+        JSON.stringify(Object.keys(sm.proxies)) === JSON.stringify([CERT, EP]), s.out);
+    const id8 = id8Root();
+    donor.tgz(id8.pre21('donor_app', '1.0.0'));
+    withDb(id8, [EP]);
+    const e = id8.run(['install', '--artifact', sourceArtifact('1.0.0', {}, { 'manifest.json': JSON.stringify(manifest) }), '--yes']);
+    const em = e.status === 0 ? JSON.parse(untarBuf(fs.readFileSync(id8.p('var/opt/mgu-deploy/id8/queue/robertn_demo@1.0.0.tgz')))[
+        'package/manifest.json']) : { proxies: {} };
+    const odd = fakeRoot();
+    withDb(odd, [EP]);
+    const oddFile = path.join(fs.mkdtempSync(path.join(T, 'app-')), 'odd_services@1.0.0.tgz');
+    fs.writeFileSync(oddFile, tgz([
+        { name: 'javascript/app.js', data: Buffer.from('console.log(1);\n'), mode: 0o644 },
+        { name: 'manifest.json', data: Buffer.from(JSON.stringify({ proxies: { [EP]: '*' }, services: [] })), mode: 0o644 },
+        { name: 'package.json', data: Buffer.from(JSON.stringify({ name: 'odd_services', version: '1.0.0', description: 'deploy test app',
+            mguLocalOnly: true })), mode: 0o644 }], 1700000000));
+    const o = odd.run(['install', '--artifact', oddFile, '--yes']);
+    check('interfaces: a manifest whose services are not an object still gets the certification service', o.status === 0 &&
+        installed(odd, 'odd_services').proxies[CERT] === '*' && !o.out.includes('not on this unit'), o.out);
+    check('interfaces: iDrive 8 keeps the manifest\'s interfaces', e.status === 0 && !e.out.includes('not on this unit') &&
+        em.proxies[EP2] === '*', e.out);
+}
+
 /* What an interrupted install left: removed only when this tool provably put it there. */
 function testInterrupted() {
     const listFile = (root) => root.p(`var/opt/public/oap/oap_${MGR}/data/custom_apps.json`);
@@ -5756,6 +5823,7 @@ const SUITES = [
     testMainApp811,
     testMainApp655,
     testCertificationProxy,
+    testUnknownInterfaces,
     testInterrupted,
     testInplaceKeepCopy,
     testInplaceHook,
