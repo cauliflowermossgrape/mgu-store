@@ -192,7 +192,7 @@ function inplaceSource(requestPath, statusPath, v) {
         'const fs=require("fs"),REQ=' + JSON.stringify(requestPath) +
         ',DIR=' + JSON.stringify(path.dirname(requestPath)) + ',OUT=' + JSON.stringify(statusPath) +
         ',start=Date.now()-Math.round(1e3*process.uptime());let last=null,busy=!1,cur=null;' +
-        'const stub=mgr&&mgr.appManager,ops=[],reqOps=[],tr={fork:null},' +
+        'const stub=mgr&&(mgr.appManager||mgr),ops=[],reqOps=[],tr={fork:null},' +
         'cap=a=>{if(a.length>12){const i=a.findIndex(x=>x.end);a.splice(i<0?0:i,1)}},' +
         'add=o=>{const a=busy&&cur&&o.app===cur.app?reqOps:ops;return a.push(o),cap(a),o},' +
         'end=(o,p)=>(Promise.resolve(p).then(()=>{o.end=Date.now()},e=>{o.end=Date.now(),' +

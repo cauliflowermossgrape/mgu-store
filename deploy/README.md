@@ -1309,7 +1309,8 @@ bundles changed.
 ### Provisioning fallback
 
 Our apps install through it. `fallback on` (and every app install) builds a
-copy of the stock `/usr/lib/oap-mainapp/src/main.js` with one change in
+copy of the stock `/usr/lib/oap-mainapp/src/main.js` (or `main.bundle.js` on
+MainApp 6.5.5, where `main.js` is a bytecode-loader stub) with one change in
 `ProvisioningNotifier`: an app with no provisioning entry takes it from
 `oap_12201/data/custom_apps.json`, which lists our apps, both in MainApp's
 `installable_apps` (so the manager installs it) and as the app's own section

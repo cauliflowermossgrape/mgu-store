@@ -6,8 +6,8 @@
  * The firmware cases run when a decoded oap-mainapp is available
  * (FIRMWARE_MAINAPP_DIR names iDrive 7's folder, FIRMWARE_MAINAPP21_DIR
  * iDrive 8's MainApp-21, 9.3.4 or 9.2.15, FIRMWARE_MAINAPP_8_1_1_DIR
- * iDrive 7's MainApp 8.1.1, FIRMWARE_MAINAPP_8_2_10_DIR its 8.2.10); each
- * is skipped otherwise.
+ * iDrive 7's MainApp 8.1.1, FIRMWARE_MAINAPP_8_2_10_DIR its 8.2.10,
+ * FIRMWARE_MAINAPP_6_5_5_DIR its 6.5.5); each is skipped otherwise.
  */
 const assert = require('assert');
 const childProcess = require('child_process');
@@ -275,11 +275,15 @@ test('the MainApp-21 patch set is recorded', () => {
 });
 
 // sha256 of JSON.stringify(PATCH_SETS_8_1_1) as shipped by 1.6.0, and of
-// MainApp 8.1.1's bundles (HU software 16.20.4) as it patches them.
+// MainApp 8.1.1's bundles (HU software 16.20.4) and 6.5.5's as it patches them.
 const PATCH_SETS_8_1_1_SHA256 = '7e7423729624348add147bd7ba7c17782cd8b0561dacd493e10dcac3ad67c18f';
 const PATCHED_8_1_1_SHA256 = {
     main: '09131f38cb0ad5dd82a64cb89301a3105eae08b0177f2a39ff185909d216d098',
     appmanagement: 'fe43f739a9d43d19a11bbd00791b3c418daaeb67a1790d5cb12e9e8eb9e383d5'
+};
+const PATCHED_6_5_5_SHA256 = {
+    main: '5c4bc83076c1adb6b57c875f8f1dd4ca68ecd2d2e33d4c38f20d95878b572e35',
+    appmanagement: '2fa98c019c235f3bed8ee09c97c31006b1c4aee48f4505a6d230768ae0bd2691'
 };
 
 test('the MainApp 8.1.1 patch set is recorded', () => {
@@ -337,7 +341,7 @@ function withReleaseBundles(unit, sets, fn) {
 }
 
 test('bundles take the edits of the MainApp release they fit', () => {
-    assert.deepStrictEqual(patcher.UNITS.ID7.mainapps.map((m) => m.version), ['8.3.2', '8.2.10', '8.1.1']);
+    assert.deepStrictEqual(patcher.UNITS.ID7.mainapps.map((m) => m.version), ['8.3.2', '8.2.10', '8.1.1', '6.5.5']);
     assert.deepStrictEqual(patcher.UNITS.ID8.mainapps.map((m) => m.version), ['9.3.4', '9.2.15']);
     [['ID7', patcher.PATCH_SETS, '8.3.2'], ['ID7', patcher.PATCH_SETS_8_2_10, '8.2.10'],
         ['ID7', patcher.PATCH_SETS_8_1_1, '8.1.1'], ['ID8', patcher.PATCH_SETS_21, '9.3.4'],
@@ -449,6 +453,31 @@ test('the kernel command line picks the MainApp', () => {
     assert.strictEqual(patcher.unitOf(''), 'ID7');
     assert.strictEqual(patcher.UNITS.ID8.paths.main, '/usr/lib/oap-mainapp21/src/main.js');
     assert.strictEqual(patcher.UNITS.ID7.paths.main, '/usr/lib/oap-mainapp/src/main.js');
+});
+
+test('bundlePathFor and resolveBundlePaths prefer a sibling .bundle.js when present', () => {
+    const dir = tmpdir();
+    try {
+        const paths = {
+            main: path.join(dir, 'main.js'),
+            appmanagement: path.join(dir, 'AppManagement.js')
+        };
+        fs.writeFileSync(paths.main, '// stub\n');
+        fs.writeFileSync(paths.appmanagement, '// bundle\n');
+        assert.strictEqual(patcher.bundlePathFor(paths.main), paths.main);
+        assert.deepStrictEqual(patcher.resolveBundlePaths(paths), paths);
+
+        const mainBundle = path.join(dir, 'main.bundle.js');
+        fs.writeFileSync(mainBundle, '// real bundle\n');
+        assert.strictEqual(patcher.bundlePathFor(paths.main), mainBundle);
+        assert.strictEqual(patcher.bundlePathFor(mainBundle), mainBundle);
+        assert.deepStrictEqual(patcher.resolveBundlePaths(paths), {
+            main: mainBundle,
+            appmanagement: paths.appmanagement
+        });
+    } finally {
+        rmrf(dir);
+    }
 });
 
 test('--unit ID8 checks, applies and reverts MainApp-21\'s edits', () => {
@@ -1411,9 +1440,13 @@ function releaseFirmware(root, version, sets, patchedSha) {
     const dir = tmpdir();
     try {
         const paths = { main: path.join(dir, 'main.js'), appmanagement: path.join(dir, 'AppManagement.js') };
+        const stockPaths = patcher.resolveBundlePaths({
+            main: path.join(root, 'src', 'main.js'),
+            appmanagement: path.join(root, 'src', 'AppManagement', 'AppManagement.js')
+        });
         const stock = {
-            main: fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8'),
-            appmanagement: fs.readFileSync(path.join(root, 'src', 'AppManagement', 'AppManagement.js'), 'utf8')
+            main: fs.readFileSync(stockPaths.main, 'utf8'),
+            appmanagement: fs.readFileSync(stockPaths.appmanagement, 'utf8')
         };
         Object.keys(paths).forEach((kind) => {
             fs.writeFileSync(paths[kind], stock[kind]);
@@ -1445,6 +1478,9 @@ test('MainApp 8.1.1 bundles patch, parse and revert exactly', () =>
 
 test('MainApp 8.2.10 bundles patch, parse and revert exactly', () =>
     releaseFirmware(process.env.FIRMWARE_MAINAPP_8_2_10_DIR, '8.2.10', patcher.PATCH_SETS_8_2_10, PATCHED_8_2_10_SHA256));
+
+test('MainApp 6.5.5 bundles patch, parse and revert exactly', () =>
+    releaseFirmware(process.env.FIRMWARE_MAINAPP_6_5_5_DIR, '6.5.5', patcher.PATCH_SETS_8_1_1, PATCHED_6_5_5_SHA256));
 
 let failed = 0;
 tests.reduce((p, t) => p.then(() => t.fn()).then((note) => {

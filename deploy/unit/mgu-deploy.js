@@ -45,7 +45,7 @@ var cp = require('child_process');
 
 /* deploy/component.json's version; bumped when a file under deploy/unit/
  * changes. */
-var VERSION = '0.7.0';
+var VERSION = '0.7.1';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -138,9 +138,16 @@ function privacyTool() {
     return env('MGU_DEPLOY_PRIVACY',
         path.join(CFG.varOpt, 'app-privacy', 'current', 'patch_mainapp.js'));
 }
-function mainJs() { return path.join(mainappRoot(), 'src', 'main.js'); }
-function appManagementJs() { return path.join(mainappRoot(), 'src', 'AppManagement', 'AppManagement.js'); }
-function certManagerJs() { return path.join(CFG.mainapp, 'src', 'scripts', 'CertificateManager.js'); }
+/* MainApp 6.5.5 ships <name>.js as a bytecode-loader stub that runs
+ * <name>.bundle.js beside it; 8.x and MainApp-21 ship the bundle in
+ * <name>.js. */
+function bundlePath(file) {
+    var b = file.replace(/\.js$/, '.bundle.js');
+    return b !== file && fs.existsSync(b) ? b : file;
+}
+function mainJs() { return bundlePath(path.join(mainappRoot(), 'src', 'main.js')); }
+function appManagementJs() { return bundlePath(path.join(mainappRoot(), 'src', 'AppManagement', 'AppManagement.js')); }
+function certManagerJs() { return bundlePath(path.join(CFG.mainapp, 'src', 'scripts', 'CertificateManager.js')); }
 function baseJson() { return path.join(CFG.mainapp, 'config', 'base.json'); }
 /* MainApp's own folder: oap-mainapp on iDrive 7, oap-mainapp21 on iDrive 8. */
 function mainappRoot() { return unitInfo().hmi === 'ID8' ? CFG.mainapp21 : CFG.mainapp; }

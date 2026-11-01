@@ -1,5 +1,9 @@
 # app-privacy changelog
 
+## 1.7.0
+
+- iDrive 7: MainApp 6.5.5 is patched too, with the same effect as on 8.1.1: our apps are left out of its backend app inventory, backend-triggered and autonomous updates, app-repository queries and downloads and corrupt-app reports, and a crashed one is only restarted. On 6.5.5 `main.js` and `AppManagement.js` are bytecode-loader stubs, so the tool patches `main.bundle.js` and `AppManagement.bundle.js` beside them and names the release `6.5.5` in `mainapp`.
+
 ## 1.6.2
 
 - iDrive 7: MainApp 8.2.10 is patched too, with the same effect as on 8.3.2: our apps are left out of its backend app inventory and updates, app-repository queries and downloads, platform analytics, corrupt-app reports and DiagOap readout, and a crashed one is only restarted. The tool's JSON names it `8.2.10` in `mainapp`. MainApp 8.3.2 and 8.1.1 are patched exactly as before.
