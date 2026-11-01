@@ -167,7 +167,7 @@ their data safely without:
 
 | id | iDrive 7 | iDrive 8 | Without it |
 |---|---|---|---|
-| `crash-gate` | yes | yes | MainApp's crash ladder: the second crash of one of our apps deletes its data (iDrive 7), the third its data (iDrive 8); later ones reinstall or disable it |
+| `crash-gate` | yes | yes | MainApp's crash ladder deletes the app's data at its second crash (iDrive 7) or third (iDrive 8), then reinstalls or disables it |
 | `crash-count` | yes | yes | an app that crashes on every start is restarted for ever instead of being left stopped after 5 restarts in 10 minutes |
 | `package-source` | yes | yes | when our app's package is not in the preinstalled folder, or the app repository lists a newer package under the app's name, MainApp installs the repository's package instead of ours |
 | `keychain-time` | yes | (none) | an install whose keychain takes longer than 35 s fails (`CertificateManager did not create the app's keychain (killed after 35 s)`) |
