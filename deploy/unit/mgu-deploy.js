@@ -4404,7 +4404,7 @@ function boundToCopy() {
  * the stock file. */
 function bindCopy() {
     if (!fs.existsSync(FALLBACK_COPY)) {
-        warn('no fallback copy at ' + FALLBACK_COPY + ': main.js stays the stock file');
+        warn('no fallback copy at ' + FALLBACK_COPY + ': ' + mainJs() + ' stays the stock file');
         return;
     }
     runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
@@ -4414,7 +4414,7 @@ function bindCopy() {
 function dropStaleBind() {
     var dropped = false;
     while (binds() && bindMounted(mainJs()) && !boundToCopy()) {
-        say('main.js was bound to a file that is not the fallback copy at ' + FALLBACK_COPY + ': unmounted');
+        say(mainJs() + ' was bound to a file that is not the fallback copy at ' + FALLBACK_COPY + ': unmounted');
         runOk(CFG.umount, [mainJs()]);
         dropped = true;
     }

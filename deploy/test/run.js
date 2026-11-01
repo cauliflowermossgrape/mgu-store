@@ -753,18 +753,26 @@ function readJsonOrNull(p) {
 
 /* A fake root whose mount and umount keep a table of binds, which the
  * deploy tool reads as /proc would show them. */
-function bindRoot(opts) {
-    const root = fakeRoot(opts);
+function bindRoot(bundle) {
+    // bundle: MainApp 6.5.5's shape, main.js a stub that runs main.bundle.js, the target of the bind
+    const root = fakeRoot(bundle ? { main: '// bytecode-loader stub\n' } : {});
+    if (bundle) {
+        write(root.p('usr/lib/oap-mainapp/src/main.bundle.js'), stockMain());
+    }
     const table = root.p('binds.tsv');
     Object.assign(root.env, { MGU_DEPLOY_FAKE_BINDS: table, MGU_DEPLOY_MOUNT: path.join(HERE, 'fake_mount.sh'),
         MGU_DEPLOY_UMOUNT: path.join(HERE, 'fake_umount.sh') });
-    const main = root.p('usr/lib/oap-mainapp/src/main.js');
+    const stub = root.p('usr/lib/oap-mainapp/src/main.js');
+    const main = bundle ? root.p('usr/lib/oap-mainapp/src/main.bundle.js') : stub;
     const copy = root.p('var/opt/mgu-deploy/main.js');
     root.binds = () => (fs.existsSync(table) ? fs.readFileSync(table, 'utf8') : '').split('\n').filter(Boolean)
         .map((l) => l.split('\t')).filter((f) => f[0] === main);
     // nothing bound over main.js, or one bind of the fallback copy as it is now
     root.bindSound = () => {
         const b = root.binds();
+        if (bundle && fs.readFileSync(table, 'utf8').split('\n').some((l) => l.split('\t')[0] === stub)) {
+            return false;
+        }
         return b.length === 0 || (b.length === 1 && b[0][1] === copy && fs.existsSync(copy) &&
             Number(b[0][2]) === fs.statSync(copy).ino);
     };
@@ -774,65 +782,70 @@ function bindRoot(opts) {
 }
 
 function testMainBind() {
+    [false, true].forEach((bundle) => mainBindCases(bundle));
+}
+
+function mainBindCases(bundle) {
+    const c = (name, cond, detail) => check(bundle ? name.replace('main.js bind:', 'main.bundle.js bind:') : name, cond, detail);
     // a first install the manager stops after the uid, before its registry entry, rolled back
-    let root = bindRoot();
+    let root = bindRoot(bundle);
     const uids = root.p(`var/opt/public/oap/oap_${MGR}/security/uids.txt`);
     root.run(['install', '--artifact', privacyArtifact(), '--yes']);
     const r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes'], { FAKE_MGR_UID_ONLY: '1' });
-    check('main.js bind: a rolled-back first install leaves main.js stock or bound to the fallback copy there is',
+    c('main.js bind: a rolled-back first install leaves main.js stock or bound to the fallback copy there is',
         r.status !== 0 && r.out.includes('rolling back fixture_app') && root.bindSound(),
         `${r.out}\nbinds: ${JSON.stringify(root.binds())} copy ${fs.existsSync(root.copy)}`);
-    check('main.js bind: the rolled-back first install leaves no uids.txt line for the app',
+    c('main.js bind: the rolled-back first install leaves no uids.txt line for the app',
         fs.readFileSync(uids, 'utf8') === '13000=stock_app\n', fs.readFileSync(uids, 'utf8'));
     // a first install the manager rejects, rolled back, then restore stock, with a line an earlier attempt left
-    root = bindRoot();
+    root = bindRoot(bundle);
     const uids2 = root.p(`var/opt/public/oap/oap_${MGR}/security/uids.txt`);
     root.run(['install', '--artifact', privacyArtifact(), '--yes']);
     fs.appendFileSync(uids2, '13007=fixture_app\n');
     const rj = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes'], { FAKE_MGR_REJECT: '1' });
-    check('main.js bind: a rejected first install, rolled back, leaves main.js stock or bound to the copy there is',
+    c('main.js bind: a rejected first install, rolled back, leaves main.js stock or bound to the copy there is',
         rj.status !== 0 && root.managerLog().includes('rejected install fixture_app 1.0.0') && root.bindSound(),
         `${rj.out}\nbinds: ${JSON.stringify(root.binds())}`);
-    check('main.js bind: the rejected first install takes out the uids.txt line an earlier attempt left',
+    c('main.js bind: the rejected first install takes out the uids.txt line an earlier attempt left',
         fs.readFileSync(uids2, 'utf8') === '13000=stock_app\n' && rj.out.includes('removed 13007=fixture_app'), `${fs.readFileSync(uids2, 'utf8')}\n${rj.out}`);
     const rs = root.run(['restore', 'stock', '--yes']);
-    check('main.js bind: restore stock after the rejected install succeeds in one run, main.js stock',
+    c('main.js bind: restore stock after the rejected install succeeds in one run, main.js stock',
         rs.status === 0 && rs.out.includes('restored from stock') && root.binds().length === 0, rs.out);
     // a failed first install of a second app with the fallback on: the copy it changed is bound again
-    root = bindRoot();
+    root = bindRoot(bundle);
     root.run(['install', '--artifact', privacyArtifact(), '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
     const second = root.run(['install', '--artifact', appArtifact('second_app', '1.0.0', true), '--yes'], { FAKE_MGR_REJECT: '1' });
-    check('main.js bind: with the fallback on, a rolled-back install leaves the copy there bound',
+    c('main.js bind: with the fallback on, a rolled-back install leaves the copy there bound',
         second.status !== 0 && root.binds().length === 1 && root.bindSound(), `${second.out}\nbinds: ${JSON.stringify(root.binds())}`);
     // restore stock in one run from a bind over a fallback copy deleted since
-    root = bindRoot();
+    root = bindRoot(bundle);
     root.run(['install', '--artifact', privacyArtifact(), '--yes']);
     write(root.copy, 'stale copy\n');
     write(root.p('binds.tsv'), `${root.main}\t${root.copy}\t${fs.statSync(root.copy).ino}\n`);
     fs.unlinkSync(root.copy);
     let res = root.run(['restore', 'stock', '--yes']);
-    check('main.js bind: restore stock from a bind of a deleted copy succeeds in one run, main.js stock',
+    c('main.js bind: restore stock from a bind of a deleted copy succeeds in one run, main.js stock',
         res.status === 0 && res.out.includes('restored from stock') && root.binds().length === 0 &&
         !fs.existsSync(root.tool('app-privacy')), `${res.out}\nbinds: ${JSON.stringify(root.binds())}`);
     // and from a bind of a copy replaced since, with the fallback on
-    root = bindRoot();
+    root = bindRoot(bundle);
     root.run(['install', '--artifact', privacyArtifact(), '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
     const on = root.binds().length === 1 && root.bindSound();
     fs.writeFileSync(`${root.copy}.new`, fs.readFileSync(root.copy));
     fs.renameSync(`${root.copy}.new`, root.copy);
     res = root.run(['restore', 'stock', '--yes']);
-    check('main.js bind: restore stock from a bind of a replaced copy succeeds in one run, main.js stock',
+    c('main.js bind: restore stock from a bind of a replaced copy succeeds in one run, main.js stock',
         on && res.status === 0 && res.out.includes('restored from stock') && root.binds().length === 0,
         `${on}\n${res.out}\nbinds: ${JSON.stringify(root.binds())}`);
     // uninstalling app-privacy (its revert under the bind) with the copy gone binds nothing missing
-    root = bindRoot();
+    root = bindRoot(bundle);
     root.run(['install', '--artifact', privacyArtifact(), '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
     root.run(['uninstall', 'fixture_app', '--yes']);
     write(root.copy, 'stale copy\n');
     write(root.p('binds.tsv'), `${root.main}\t${root.copy}\t${fs.statSync(root.copy).ino}\n`);
     fs.unlinkSync(root.copy);
     const un = root.run(['uninstall', 'app-privacy', '--yes']);
-    check('main.js bind: app-privacy\'s revert with the bound copy deleted binds no missing copy',
+    c('main.js bind: app-privacy\'s revert with the bound copy deleted binds no missing copy',
         un.status === 0 && !un.out.includes('does not exist') && root.bindSound(),
         `${un.out}\nbinds: ${JSON.stringify(root.binds())}`);
 }
