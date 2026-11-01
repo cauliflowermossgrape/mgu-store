@@ -230,7 +230,7 @@ With `sdk`, the oap-sdk module `sdk-donor` generates (`module`: its
 `index.js` and `package.json`) is copied into that folder of the repo
 first. It must leave exactly `<id>@<version>.tgz` in `MGU_OUT`, or the
 file its `output` names in the repo, which is copied there as the build
-uid; that goes to the deploy tool like a release package (an `oap-sdk`
+uid, over a file the build left there under that name; that goes to the deploy tool like a release package (an `oap-sdk`
 module generated for it there when it requires one). A build with
 `network` gets the internet through `js/proxy.js`, an HTTP proxy on
 127.0.0.1 at a random port that the updater runs as the fetch uid for that

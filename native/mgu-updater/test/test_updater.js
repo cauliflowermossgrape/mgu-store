@@ -3823,6 +3823,7 @@ function testPythonRepo() {
         '};',
         "if (id === 'fifoapp') { fs.mkdirSync('dist'); cp.execFileSync('mkfifo', [path.join('dist', `${id}@${app.version}.tgz`)]); process.exit(0); }",
         "if (id === 'zeroapp') { fs.mkdirSync('dist'); fs.symlinkSync('/dev/zero', path.join('dist', `${id}@${app.version}.tgz`)); process.exit(0); }",
+        "if (id === 'bothapp') { done(null); fs.writeFileSync(path.join(process.env.MGU_OUT, `${id}@${app.version}.tgz`), 'not the declared output'); process.exit(0); }",
         "if (id !== 'netapp') { done(null); } else {",
         '  const p = new URL(process.env.https_proxy);',
         "  const auth = 'Basic ' + Buffer.from(`${p.username}:${p.password}`).toString('base64');",
@@ -3862,6 +3863,7 @@ function testPythonRepo() {
         'apps/skipme/app.json': JSON.stringify({ id: 'skipme', version: '1.0.0' }),
         'apps/fifoapp/app.json': JSON.stringify({ id: 'fifoapp', version: '1.0.0' }),
         'apps/zeroapp/app.json': JSON.stringify({ id: 'zeroapp', version: '1.0.0' }),
+        'apps/bothapp/app.json': JSON.stringify({ id: 'bothapp', version: '1.0.0' }),
         'apps/notanapp/readme.txt': 'not an app\n',
         'kit/build.py': buildPy,
         'prebuilt/svc-bin': ['#!/bin/sh\nexec sleep 1000\n', 0o755],
@@ -3973,8 +3975,14 @@ function testPythonRepo() {
                         /zeroapp@1\.0\.0\.tgz: not a file the build left \(ELOOP\)/.test(comp('zeroapp').error || '') &&
                         comp('fifoapp').status !== 'installed' && comp('zeroapp').status !== 'installed' && Date.now() - t0 < 30000,
                         JSON.stringify([comp('fifoapp').error, comp('zeroapp').error, Date.now() - t0]));
-                    return ask(conf.socket, { op: 'install', id: 'gate' });
+                    return ask(conf.socket, { op: 'install', id: 'bothapp' }).then(() => settle('bothapp'));
                 });
+        })
+        .then(() => {
+            const pkg = comp('bothapp').status === 'installed' ? pkgOf('bothapp') : {};
+            ok('output: a build that also leaves its package in MGU_OUT installs the declared output',
+                comp('bothapp').status === 'installed' && pkg.name === 'bothapp', JSON.stringify([comp('bothapp'), pkg]));
+            return ask(conf.socket, { op: 'install', id: 'gate' });
         })
         .then((why) => {
             ok('preload: listed with what it needs; refused while no installed tool provides it, naming one that does',
