@@ -1,5 +1,9 @@
 # Updater changelog
 
+## 0.8.12
+
+- A build whose `output` names its package installs when the build also leaves a file of that name in `MGU_OUT`: the declared output replaces it.
+
 ## 0.8.11
 
 - Default source: IterioDev/car-apps on its tags channel (the newest x.y.z tag, as its README asks), added once at the first start of this version (and seeded by the installers, `deploy/sources.json`), unless a source of that repo is there already. A component whose `mguHmi` names only other head units is not offered, and its install is refused. Like any source it can be removed; once removed it is not added again.
