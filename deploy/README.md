@@ -938,7 +938,7 @@ The app manager installs our apps itself.
   package, keeping the uid, the data and the keychain: in place (below), or
   else the entry's `installationSource` is re-seeded as null (uid and
   provisioning cache kept) and one bounce lets the restarted manager update
-  it. MainApp 8.1.1 and 8.2.10 update no app at its start: after the bounce, the
+  it. MainApp 8.1.1 and 8.2.10 update no app at their start: after the bounce, the
   restarted manager updates it in place. A running manager on older bundles than `main.js` (the copy, when
   bound) and `AppManagement.js` hold is bounced before the new package is
   placed, and the restarted one updates the app in place. The package of

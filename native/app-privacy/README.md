@@ -39,15 +39,14 @@ without the marker. Installers do not maintain it.
 
 All sites are in `/usr/lib/oap-mainapp/src/main.js` and
 `/usr/lib/oap-mainapp/src/AppManagement/AppManagement.js`. MainApp 8.1.1
-has no platform analytics, no `getAvailableUpdatesFromBackend` sweep and no
-`DiagOapProvider`, so those rows apply to 8.3.2 and 8.2.10 only. MainApp
-8.2.10's update-availability sweep is `AppsAutoupdater._areUpdatesAvailable`.
+has no platform analytics, no update-availability sweep and no
+`DiagOapProvider`, so those rows apply to 8.3.2 and 8.2.10 only.
 
 | Path | Site |
 |---|---|
 | Backend app inventory, `AppManagement_ff.getAllInstalledApps` → `AppManagementResult.getAllInstalledAppsResult` (joynr, domain `inf.apr`) | `AppManagementFfProviderImpl.getAllInstalledApps` |
 | Backend-triggered update of every app | `AppManagementFfProviderImpl.updateAllApps` |
-| App-repository version queries (`GET <repo_url>/<appId>` with a `BMW-Vin` header) | `NpmPackageManager.getLatestAppVersion`; the sweeps in `AppManagementController.getAvailableUpdatesFromBackend`, `AppsAutoupdater._performUpdate` and `MainApp._contextUpdateHandler` skip local-only apps as well |
+| App-repository version queries (`GET <repo_url>/<appId>` with a `BMW-Vin` header) | `NpmPackageManager.getLatestAppVersion`; the sweeps in `AppManagementController.getAvailableUpdatesFromBackend` (8.2.10: `AppsAutoupdater._areUpdatesAvailable`), `AppsAutoupdater._performUpdate` and `MainApp._contextUpdateHandler` skip local-only apps as well |
 | App-repository package downloads | `NpmPackageManager.download` (preinstalled folder only) |
 | Platform analytics events carrying an app name (`APP_INSTALL`, `APP_CRASH`), forwarded via the CDC app | `AppManagementController.queuedRecursiveRetry`, `CorruptAppsHandler._tryRecoverApp` (with the crash recovery below); `APP_DOWNLOAD` and `APP_SIGNATURE_CHECK` fire only for app-repository downloads, which local-only apps never make |
 | Corrupt-app reports (`appId`, version, VIN) | `CorruptAppsHandler._handleAsIrrecoverable`, `AppManager._reportCorruptApp` |
