@@ -362,6 +362,34 @@ test('bundles take the edits of the MainApp release they fit', () => {
     }));
 });
 
+// 6.5.5 takes 8.1.1's edits: its stock fingerprint names it, patched or not.
+test('bundles with 6.5.5\'s stock fingerprint are named 6.5.5, others with its edits 8.1.1', () =>
+    withReleaseBundles('ID7', patcher.PATCH_SETS_8_1_1, (b) => {
+        const entry = patcher.UNITS.ID7.mainapps.filter((m) => m.version === '6.5.5')[0];
+        const known = entry.known;
+        const proc = path.join(b.dir, 'proc');
+        fs.mkdirSync(proc);
+        const run = (command) => patcher.run(command, b.paths, () => {}, proc, null, 'ID7');
+        try {
+            assert.strictEqual(run('check').result.mainapp, '8.1.1');
+            entry.known = { main: crypto.createHash('sha256').update(b.read('main')).digest('hex'),
+                appmanagement: crypto.createHash('sha256').update(b.read('appmanagement')).digest('hex') };
+            let r = run('check');
+            assert.strictEqual(r.result.mainapp, '6.5.5');
+            assert.ok(r.result.files.every((f) => f.reference));
+            r = run('apply');
+            assert.strictEqual(r.code, 0);
+            assert.strictEqual(r.result.mainapp, '6.5.5');
+            r = run('check');
+            assert.strictEqual(r.result.state, 'patched');
+            assert.strictEqual(r.result.mainapp, '6.5.5');
+            assert.strictEqual(run('revert').result.mainapp, '6.5.5');
+            assert.strictEqual(crypto.createHash('sha256').update(b.read('main')).digest('hex'), entry.known.main);
+        } finally {
+            entry.known = known;
+        }
+    }));
+
 // 8.2.10's AppManagement.js edits are 8.3.2's: its main.js tells them apart.
 test('each iDrive 7 release\'s edits fit only its own bundles', () => {
     const sets = { '8.3.2': patcher.PATCH_SETS, '8.2.10': patcher.PATCH_SETS_8_2_10, '8.1.1': patcher.PATCH_SETS_8_1_1 };

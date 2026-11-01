@@ -2,7 +2,7 @@
 
 ## 0.7.2
 
-- iDrive 7 with MainApp 6.5.5: the provisioning fallback (`mgu-deploy.js` and `mgu-app-fallback.service`), `AppManagement` inspection and `CertificateManager` use `<name>.bundle.js` when it is present beside the bytecode-loader stub `<name>.js`, the in-place hook traces `AppManagerStub` directly when MainApp has no `AppManagementController` wrapper, and `tools/oap_link.js` links source packages and generates `oap-sdk` from 6.5.5 donors that ship `bundle.js` at the package root with a minified browserify prelude.
+- iDrive 7 with MainApp 6.5.5: app installs and updates work. Its `main.js` and `AppManagement.js` are bytecode-loader stubs, so the provisioning fallback copy is built from `main.bundle.js` and bound over it, and the tool reads `AppManagement.bundle.js`. Its manager has no `AppManagementController`, so the in-place hook works with its `AppManagerStub` directly; a fresh app the restarted manager has not installed by itself once started up is installed in place.
 
 ## 0.7.1
 

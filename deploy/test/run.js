@@ -1377,6 +1377,23 @@ function testMainApp811() {
     stopHooked(f);
 }
 
+/* MainApp 6.5.5: main.js is a bytecode-loader stub that runs main.bundle.js,
+ * and its restarted manager installs no app at its start. */
+function testMainApp655() {
+    const root = fakeRoot({ mainapp811: true, main: '// bytecode-loader stub\n' });
+    write(root.p('usr/lib/oap-mainapp/src/main.bundle.js'), stockMain());
+    const r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes'],
+        { FAKE_MGR_HOOK: '1', FAKE_MGR_NO_START_INSTALL: '1' });
+    const log = root.managerLog();
+    let killAt = -1;
+    log.forEach((l, i) => { if (l.startsWith('kill ')) killAt = i; });
+    check('MainApp 6.5.5: a fresh install through a bounce is made in place by the restarted manager',
+        r.status === 0 && root.kills().length === 1 && r.out.includes('through a bounce') &&
+        r.out.includes('installed in place by the app manager') && killAt >= 0 &&
+        log.indexOf('install fixture_app 1.0.0 uid 13001 in place') > killAt, `${r.out}\n${log.join('\n')}`);
+    stopHooked(root);
+}
+
 /* The certification service in the app's SOME/IP manifest: MainApp's install gets its keychain through it. */
 function testCertificationProxy() {
     const withManifest = (name, manifest, pkgExtra) => {
@@ -5671,6 +5688,7 @@ const SUITES = [
     testInplace,
     testCertCopy,
     testMainApp811,
+    testMainApp655,
     testCertificationProxy,
     testInterrupted,
     testInplaceKeepCopy,

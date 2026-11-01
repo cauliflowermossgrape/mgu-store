@@ -45,7 +45,7 @@ var cp = require('child_process');
 
 /* deploy/component.json's version; bumped when a file under deploy/unit/
  * changes. */
-var VERSION = '0.7.3';
+var VERSION = '0.7.2';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -146,6 +146,7 @@ function bundlePath(file) {
     return b !== file && fs.existsSync(b) ? b : file;
 }
 function mainJs() { return bundlePath(path.join(mainappRoot(), 'src', 'main.js')); }
+function bytecodeStubs() { return mainJs() !== path.join(mainappRoot(), 'src', 'main.js'); }
 function appManagementJs() { return bundlePath(path.join(mainappRoot(), 'src', 'AppManagement', 'AppManagement.js')); }
 function certManagerJs() { return bundlePath(path.join(CFG.mainapp, 'src', 'scripts', 'CertificateManager.js')); }
 function baseJson() { return path.join(CFG.mainapp, 'config', 'base.json'); }
@@ -2844,33 +2845,29 @@ function installInPlace(a, existing) {
         st = inplaceAnswer(id) || st;
     }
 }
-/* The install or update of an app by the restarted manager in place, for a
- * manager that updates no app at its start (MainApp 6.5.5 and 8.1.1). */
-function installAfterBounce(a, existing) {
+/* The update of an app by the restarted manager in place, for a manager
+ * that updates no app at its start (MainApp 8.1.1 and 6.5.5). */
+function updateAfterBounce(a, existing) {
+    waitStartedUp('updating ' + a.id + ' ' + a.version);
+    var r = installInPlace(a, existing);
+    if (r.uid) return r.uid;
+    throw fail('the app manager could not update ' + a.id + ' ' + a.version + ' after its restart: ' +
+        (r.ranFailed ? managerReason(r.error) : r.why));
+}
+/* The install of a fresh app by the restarted manager, for MainApp 6.5.5:
+ * in place when it has not installed the app by itself once started up,
+ * else watched. */
+function installAfterBounce(a) {
     var s = installState(a);
-    if (s.done) {
-        say(a.id + ' ' + a.version + ' installed by the app manager as uid ' + s.uid + ' (source ' + s.source + ')');
-        return s.uid;
-    }
-    if (fs.existsSync(FALLBACK_COPY) && inplaceHookOf(fs.readFileSync(FALLBACK_COPY, 'utf8')) !== null) {
-        waitStartedUp((existing ? 'updating ' : 'installing ') + a.id + ' ' + a.version);
-        s = installState(a);
-        if (s.done) {
-            say(a.id + ' ' + a.version + ' installed by the app manager as uid ' + s.uid + ' (source ' + s.source + ')');
-            return s.uid;
-        }
-        var r = installInPlace(a, existing);
-        if (r.uid) return r.uid;
-        if (r.ranFailed) {
-            throw fail('the app manager could not ' + (existing ? 'update ' : 'install ') + a.id + ' ' + a.version + ': ' +
-                managerReason(r.error));
+    if (!s.done && fs.existsSync(FALLBACK_COPY) && inplaceHookOf(fs.readFileSync(FALLBACK_COPY, 'utf8')) !== null) {
+        waitStartedUp('installing ' + a.id + ' ' + a.version);
+        if (!installState(a).done) {
+            var r = installInPlace(a, null);
+            if (r.uid) return r.uid;
+            if (r.ranFailed) throw fail('the app manager could not install ' + a.id + ' ' + a.version + ': ' + managerReason(r.error));
         }
     }
     return watchInstall(a);
-}
-/* The update of an app by the restarted manager in place (backward compatibility). */
-function updateAfterBounce(a, existing) {
-    return installAfterBounce(a, existing);
 }
 /* The uid when the manager has installed or updated the app by itself: a
  * manager restarted during this run (app-privacy's bounce, say) installs
@@ -3120,7 +3117,8 @@ function installApp(a, state, decision) {
             say('registry entry re-seeded for the update (uid ' + entry.userId + ')');
         }
         bounceManager();
-        uid = !managerRecordsSource() ? installAfterBounce(a, existing) : watchInstall(a);
+        uid = existing && !managerRecordsSource() ? updateAfterBounce(a, existing) :
+            !existing && bytecodeStubs() ? installAfterBounce(a) : watchInstall(a);
         if (existing && uid !== existing.uid) warn(a.id + ' runs as uid ' + uid + ' now; its data stays in ' + appHome(existing.uid));
     }
     var tf = tileFlags(readJsonOrNull(appEntryFile(a.id)));

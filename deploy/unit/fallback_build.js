@@ -95,7 +95,8 @@ var HOOK = 'if(isMainapp&&section===mainAppSection){' +
     MARK + ';';
 
 /* Runs in the app manager once MainApp has initialized, with main.js's own
- * appManager (AppManagementController), appRegistry and logger. It writes
+ * appManager (AppManagementController; on MainApp 6.5.5, which has none,
+ * the AppManagerStub itself), appRegistry and logger. It writes
  * the status file {pid, start, at, state: "ready"} and polls the request
  * file each second. A request, {id, app, action: "install"|"update"|"uninstall",
  * notAfter}, counts only in a folder and file owned by root (or the
@@ -108,15 +109,17 @@ var HOOK = 'if(isMainapp&&section===mainAppSection){' +
  * it (its tile goes) and removes its folders; each touches only that app.
  * Nothing in it throws into the manager.
  *
- * It also traces the manager's installer (AppManagerStub, appManager's
- * own appManager): each install, update or uninstall it queues ("q") and
+ * It also traces the manager's installer (AppManagerStub: appManager's
+ * own appManager, or appManager itself): each install, update or uninstall it queues ("q") and
  * each call it runs in its AppManagement child ("run", with
  * getLatestAvailableVersion), with app, start, end and error: the last 12
  * of the requested app's and of the others' each; and when it started
  * that child (early: a start already under way when the hook came up). While a request runs, the status file
  * carries that trace each second, with the manager's network-retry count
  * and whether a retry delay or an NSM resume is pending. */
-var ID7 = { start: '', stub: '_', run: '"update"===r.action?mgr.update(r.app,"PLATFORM"):' +
+/* iDrive 7: the AppManagerStub is the controller's appManager, or on
+ * MainApp 6.5.5, which has no controller, the hook's appManager itself. */
+var ID7 = { start: '', stub: '_', installer: 'mgr&&(mgr.appManager||mgr)', run: '"update"===r.action?mgr.update(r.app,"PLATFORM"):' +
     '"uninstall"===r.action?mgr.uninstall(r.app):mgr.install(r.app)', args: '(appManager,appRegistry,logger)' };
 /* MainApp-21: its provisioning handler's anchor, the hook's (the start-up's
  * init, whose resolution the hook follows), the AppManagerStub's member
@@ -125,7 +128,7 @@ var ID7 = { start: '', stub: '_', run: '"update"===r.action?mgr.update(r.app,"PL
  * only while the guard (guardSource) lets it, else it writes the status
  * file {state: "off", why} and takes no request. */
 var ID8 = { hookAnchor: 'this.isMainapp&&section===this.mainappSection&&(newProvisioning.',
-    inplaceAnchor: 'Promise.all([mainApp.init()])', stub: '',
+    inplaceAnchor: 'Promise.all([mainApp.init()])', stub: '', installer: 'mgr&&mgr.appManager',
     start: 'const g=global.__mguDeployGuard;if(!g||!g.on)return void put({state:"off",why:g?g.why:"no guard"});setTimeout(g.ready,6e4);',
     run: '"update"===r.action?mgr.update(r.app,{updateType:"PLATFORM",requestSource:"PREINSTALLED"}):' +
         '"uninstall"===r.action?mgr.uninstall(r.app):mgr.install(r.app,{requestSource:"PREINSTALLED"})',
@@ -192,7 +195,7 @@ function inplaceSource(requestPath, statusPath, v) {
         'const fs=require("fs"),REQ=' + JSON.stringify(requestPath) +
         ',DIR=' + JSON.stringify(path.dirname(requestPath)) + ',OUT=' + JSON.stringify(statusPath) +
         ',start=Date.now()-Math.round(1e3*process.uptime());let last=null,busy=!1,cur=null;' +
-        'const stub=mgr&&(mgr.appManager||mgr),ops=[],reqOps=[],tr={fork:null},' +
+        'const stub=' + v.installer + ',ops=[],reqOps=[],tr={fork:null},' +
         'cap=a=>{if(a.length>12){const i=a.findIndex(x=>x.end);a.splice(i<0?0:i,1)}},' +
         'add=o=>{const a=busy&&cur&&o.app===cur.app?reqOps:ops;return a.push(o),cap(a),o},' +
         'end=(o,p)=>(Promise.resolve(p).then(()=>{o.end=Date.now()},e=>{o.end=Date.now(),' +

@@ -996,13 +996,16 @@ function runCommand(command, paths, log, mainapps) {
             jobs = tried;
             best = key;
         }
-        // Releases that share edits (6.5.5 takes 8.1.1's) both fit either's
-        // stock bundle; the release whose fingerprint the bundle carries
-        // names it. Otherwise the first release that fits wins.
-        if (!key[0] && !key[1] && !key[2] && tried.every((j) => j.sha256 === mainapps[i].known[j.kind])) {
-            chosen = mainapps[i];
-            jobs = tried;
-            best = key;
+        if (!key[0] && !key[1] && !key[2]) {
+            // A later release with the same edits (6.5.5 takes 8.1.1's)
+            // names the bundles when they carry its stock fingerprint,
+            // patched or not.
+            const twin = mainapps.slice(i + 1).filter((m) => m.sets.current === chosen.sets.current &&
+                tried.every((j) => j.stockSha256 === m.known[j.kind]))[0];
+            if (twin) {
+                chosen = twin;
+                jobs = prepare(command, paths, twin.sets, twin.known);
+            }
             break;
         }
     }
