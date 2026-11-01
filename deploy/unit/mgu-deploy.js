@@ -1804,6 +1804,8 @@ function privacyApplyAndBounce(state) {
         return { ok: false, why: 'apply exited ' + r.status + (result ? privacyMismatch(result) : ' with no result') };
     }
     say('app-privacy: ' + (result.state || 'applied') + (result.changed ? ' (applied now)' : ''));
+    var skipped = privacySkipped(result.edits);
+    if (skipped) say('app-privacy: ' + skipped);
     /* MainApp-21 is never bounced: it loads the bundles at its next start,
      * as it takes app changes (app-privacy reports nextStart) */
     if (isId8()) {
@@ -1813,6 +1815,22 @@ function privacyApplyAndBounce(state) {
         }
     } else if ((result.changed || result.restartNeeded) && managerPid()) bounceManager();
     return { ok: true };
+}
+/* app-privacy's per-edit results (1.7.0 on) in one line, when it left out
+ * privacy-only edits whose anchors this MainApp lacks: "11 of 12 privacy
+ * edits applied; skipped: <title>, ..."; '' otherwise. */
+function privacySkipped(edits) {
+    if (!Array.isArray(edits)) return '';
+    var privacy = edits.filter(function (e) { return e && !e.required && String(e.id).indexOf('helper:') !== 0; });
+    var skipped = privacy.filter(function (e) { return e.result === 'skipped-not-found'; });
+    if (!skipped.length) return '';
+    return privacy.filter(function (e) { return e.result === 'applied'; }).length + ' of ' + privacy.length +
+        ' privacy edits applied; skipped: ' + skipped.map(function (e) { return e.title || e.id; }).join(', ');
+}
+/* app-privacy's record of its runs (native/app-privacy/README.md,
+ * "Record"), null without one. */
+function privacyRecord() {
+    return readJsonOrNull(path.join(CFG.varOpt, 'app-privacy', 'edit-record.json'));
 }
 /* app-privacy's JSON result of a refusal: the MainApp bundles do not
  * match its edits (a MainApp version it was not made for, or bundles
@@ -4715,6 +4733,7 @@ function cmdStatus(args, crashList, live) {
     var s = collectStatus(loadState());
     s.crash_list = crashList;
     if (live) s.live_installs = live;
+    s.app_privacy_record = privacyRecord();
     if (args.json) { say(JSON.stringify(s)); return 0; }
     say('crash handler whitelist: ' + crashList.state + ' (' + crashList.reason + ')');
     if (live) say('live app installs: ' + live.state + ' (' + live.reason + ')');
@@ -4736,6 +4755,13 @@ function cmdStatus(args, crashList, live) {
         }
     });
     if (!s.components.length) say('  (none)');
+    var runs = s.app_privacy_record && Array.isArray(s.app_privacy_record.latest) ? s.app_privacy_record.latest : [];
+    var lastRun = runs[runs.length - 1];
+    if (lastRun) {
+        var skippedNow = privacySkipped(lastRun.edits);
+        say('app-privacy: ' + lastRun.state + ' on MainApp ' + (lastRun.mainappVersion || 'unknown') + ' (' + lastRun.command +
+            ' ' + lastRun.time + ')' + (skippedNow ? '; ' + skippedNow : ''));
+    }
     say('display-bridge socket: ' + (s.display_bridge_socket ? 'present' : 'absent'));
     s.display_bridge_todo_on_car.forEach(function (l) { say('  ' + l); });
     say('fallback: ' + (s.fallback.active ? 'active' : 'inactive') +
@@ -4816,8 +4842,9 @@ function cmdCheck(args) {
     var tool = privacyTool();
     if (fs.existsSync(tool)) {
         var r = run(CFG.node, [tool, 'check', '--json'], { allowFail: true });
-        var lines = (r.stdout || '').split('\n').filter(function (l) { return l.trim(); });
-        say('app-privacy: ' + (lines[lines.length - 1] || ('exit ' + r.status)));
+        var res = lastJsonLine(r.stdout), sk = res ? privacySkipped(res.edits) : '';
+        say('app-privacy: ' + (res ? res.state + (res.mainapp ? ' (MainApp ' + res.mainapp + ' edits)' : '') +
+            (sk ? '; ' + sk : '') : 'exit ' + r.status));
     } else say('app-privacy: not installed (' + tool + ')');
     var stockCopies = 0;
     retiredBackups().forEach(function (b) {

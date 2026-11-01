@@ -2317,6 +2317,59 @@ function testPrivacyTool() {
         fs.existsSync(path.join(root.tool('app-privacy'), 'current')), r.out);
 }
 
+/* app-privacy that leaves out privacy-only edits this MainApp lacks still
+ * lets apps install, and says which in one line; one that refuses a
+ * required edit refuses the install. Its record is in status --json. */
+function testPrivacySkipped() {
+    let root = fakeRoot();
+    root.env.FAKE_PRIVACY_SKIPPED = 'update-availability-sweep';
+    let r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
+    check('privacy skipped: an app installs with an optional edit skipped, named in one line',
+        r.status === 0 && r.out.split('\n').filter((l) => l.indexOf('privacy edits applied') >= 0).length === 1 &&
+        r.out.includes('app-privacy: 2 of 3 privacy edits applied; skipped: update availability sweep') &&
+        root.entry('fixture_app') && fs.existsSync(root.entry('fixture_app')), r.out);
+    root = fakeRoot();
+    r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
+    check('privacy skipped: with every edit applied there is no skipped line',
+        r.status === 0 && !r.out.includes('privacy edits applied'), r.out);
+    root = fakeRoot();
+    root.env.FAKE_PRIVACY_REFUSED = 'crash-count';
+    r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
+    check('privacy skipped: a required edit refused refuses the app install',
+        r.status === 2 && r.out.includes('refusing the app install') && r.out.includes('(required crash-count)') &&
+        !fs.existsSync(root.entry('fixture_app')), r.out);
+
+    root = id8Root();
+    root.env.FAKE_PRIVACY_SKIPPED = 'release-notes,analytics-start';
+    r = root.run(['install', '--artifact', rhmiApp('robertn_x8', '1.0.0', ['ID8'], { marked: true, npm: true }), '--yes']);
+    check('privacy skipped id8: an app queues with optional edits skipped, named in one line',
+        r.status === 0 && r.out.includes('app-privacy: 2 of 4 privacy edits applied; skipped: release notes, analytics start') &&
+        fs.existsSync(root.p('var/opt/mgu-deploy/id8/queue/robertn_x8@1.0.0.tgz')), r.out);
+    root = id8Root();
+    root.env.FAKE_PRIVACY_REFUSED = 'package-source';
+    r = root.run(['install', '--artifact', rhmiApp('robertn_x8', '1.0.0', ['ID8'], { marked: true, npm: true }), '--yes']);
+    check('privacy skipped id8: a required edit refused refuses the app install',
+        r.status === 2 && r.out.includes('refusing the app install') &&
+        !fs.existsSync(root.p('var/opt/mgu-deploy/id8/queue/robertn_x8@1.0.0.tgz')), r.out);
+
+    root = fakeRoot();
+    check('privacy record: status --json has none before app-privacy wrote one', root.status().app_privacy_record === null,
+        JSON.stringify(root.status().app_privacy_record));
+    const record = { latest: [{ time: '2026-11-01T10:00:00.000Z', command: 'apply', appPrivacy: '1.7.0', unit: 'ID7',
+        mainappVersion: '8.2.10', patchSet: '8.3.2', fingerprint: '0123456789abcdef', state: 'patched', files: [],
+        edits: [{ id: 'crash-gate', title: 'crash recovery', required: true, result: 'applied' },
+            { id: 'backend-inventory', title: 'backend app inventory', required: false, result: 'applied' },
+            { id: 'update-availability-sweep', title: 'update-availability sweep', required: false,
+                result: 'skipped-not-found' }] }], history: [] };
+    write(root.p('var/opt/app-privacy/edit-record.json'), JSON.stringify(record));
+    check('privacy record: status --json carries app-privacy\'s record as it is',
+        JSON.stringify(root.status().app_privacy_record) === JSON.stringify(record), JSON.stringify(root.status()));
+    r = root.run(['status']);
+    check('privacy record: status names the last run and the skipped edits in one line', r.status === 0 &&
+        r.out.includes('app-privacy: patched on MainApp 8.2.10 (apply 2026-11-01T10:00:00.000Z); ' +
+            '1 of 2 privacy edits applied; skipped: update-availability sweep'), r.out);
+}
+
 /* iDrive 8: MainApp-21 is never bounced for app-privacy; its patch takes
  * effect at the next start, before MainApp-21 installs a queued app. */
 function testPrivacyId8() {
@@ -5589,6 +5642,7 @@ const SUITES = [
     testNoManagerInstall,
     testRestore,
     testPrivacyRevert,
+    testPrivacySkipped,
     testStatusJson,
     testFallback,
     testInplace,
