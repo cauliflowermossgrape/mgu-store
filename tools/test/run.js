@@ -319,6 +319,30 @@ function testModuleMode() {
     check('module: sdkModule is that donor, its text and oap-sdk version, and the module generated from it',
         sd.donor === 'donor_app@1.0.0.tgz:javascript/app.js' && sd.text === donor.bundle() && sd.sdkVersion === '24.10.2' &&
         /^\/\* require\('oap-sdk'\)/.test(sd.index) && JSON.parse(sd.pkg).version === '24.10.2' && sd.api.indexOf('OnlineApp') >= 0);
+
+    // MainApp 6.5.5 preinstalled donor (e.g. x_call@3.7.2.tgz): bundle.js at package root, UglifyJS-minified prelude
+    const minBundle = donor.bundle()
+        .replace(/^\(function\(\)\{function r\(e,n,t\)\{/, '!function(){return function r(e,n,t){')
+        .replace(/return o\}return r\}\)\(\)/, 'return o}}()');
+    const donor655 = path.join(tmp('donor655'), 'x_call@3.7.2.tgz');
+    fs.writeFileSync(donor655, tgz([
+        { name: 'bundle.js', data: Buffer.from(minBundle), mode: 0o644 },
+        { name: 'package.json', data: Buffer.from(JSON.stringify({ name: 'x_call', version: '3.7.2', main: 'x_call.js' })), mode: 0o644 },
+        { name: 'x_call.js', data: Buffer.from('#!/usr/bin/node --serialize_eager\nrequire("./bundle.js");\n'), mode: 0o644 }
+    ], 1700000000));
+    const b655 = path.join(tmp('out655'), 'demo.tgz');
+    const r655 = link.build(sourceApp(), b655, { donors: [donor655], epoch: 1700000000 });
+    const run655 = cp.spawnSync(process.execPath, [path.join(extract(b655), 'javascript', 'app.js')], { encoding: 'utf8' });
+    check('MainApp 6.5.5 donor (root bundle.js, !function...return o}}() prelude): bundle mode links and runs',
+        r655.donor === 'x_call@3.7.2.tgz:bundle.js' && run655.status === 0 && run655.stdout === 'demo function function',
+        run655.stdout + run655.stderr);
+    const tp655 = thirdParty();
+    const m655 = path.join(tmp('out655'), 'warmup.tgz');
+    const pr655 = link.preparePackage(tp655, m655, { donors: [donor655] });
+    const runTp655 = cp.spawnSync(process.execPath, [path.join(extract(m655), 'javascript', 'app.js')], { encoding: 'utf8' });
+    check('MainApp 6.5.5 donor: module mode generates a working oap-sdk and recognizes the minified bundle',
+        pr655.sdk && pr655.sdk.donor === 'x_call@3.7.2.tgz:bundle.js' && runTp655.status === 0 &&
+        runTp655.stdout === 'w function function function', runTp655.stdout + runTp655.stderr);
 }
 
 function testUntar() {
