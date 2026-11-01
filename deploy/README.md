@@ -873,7 +873,7 @@ succeeds.
 
 An `apply` that leaves out optional edits this MainApp has no place for
 (native/app-privacy/README.md, "Required and optional edits") succeeds:
-app installs go ahead, and the output names them in one line,
+app installs go ahead, and the output names them in one line, once per run,
 `app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`.
 `status` shows the same for app-privacy's last run, and `status --json`
 carries its record (`/var/opt/app-privacy/edit-record.json`) as

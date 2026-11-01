@@ -2,7 +2,7 @@
 
 ## 0.7.1
 
-- When app-privacy leaves out privacy-only edits this MainApp has no place for, app installs go ahead and the output says which, in one line: `app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`. `status` shows the same for app-privacy's last run.
+- When app-privacy (1.7.0 on) leaves out privacy-only edits this MainApp has no place for, the output says which, once per run: `app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`. `status` shows the same for app-privacy's last run.
 - `status --json` carries app-privacy's record of its runs (`app_privacy_record`, null without one).
 
 ## 0.7.0

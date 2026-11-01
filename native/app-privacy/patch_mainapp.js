@@ -25,9 +25,9 @@
  * Runs on the head unit as root with its Node 8; no dependencies.
  *
  *   patch_mainapp.js --version
- *   patch_mainapp.js check  [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH]
- *   patch_mainapp.js apply  [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH]
- *   patch_mainapp.js revert [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH]
+ *   patch_mainapp.js check  [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH] [--record PATH]
+ *   patch_mainapp.js apply  [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH] [--record PATH]
+ *   patch_mainapp.js revert [--json] [--unit ID7|ID8] [--main PATH] [--appmanagement PATH] [--record PATH]
  *   patch_mainapp.js boot
  *   patch_mainapp.js check-apps APPS_DIR [APPS_DIR ...]
  *
@@ -40,10 +40,12 @@
  * refuse (mismatch; nothing written) and 1 on an error while writing.
  * boot is apply for the boot unit and always exits 0. With --json the last
  * stdout line is one JSON object: {version, command, state, changed,
- * restartNeeded, files, unit, mainapp}; restartNeeded is true while a
+ * restartNeeded, files, edits, skipped, unit, mainapp, mainappVersion,
+ * fingerprint}, for check also record; restartNeeded is true while a
  * running MainApp started before the bundles were last written, and
  * mainapp names the MainApp release whose edits the bundles take (null on
- * a mismatch).
+ * a mismatch). Runs on the unit's own bundles write the record
+ * (RECORD_FILE); --record PATH writes it there for any bundles.
  */
 const childProcess = require('child_process');
 const crypto = require('crypto');
@@ -914,6 +916,26 @@ function prepare(command, paths, sets, known) {
     });
 }
 
+/* An edit the chosen release's anchor does not find, whose counterpart
+ * in another release's edits occurs more often than expected (or less but
+ * at least once), is ambiguous: it refuses everything as its own anchor
+ * would. */
+function refuseAmbiguousElsewhere(jobs, others) {
+    jobs.forEach((job, k) => skippedEdits([job]).forEach((e) => {
+        const elsewhere = others.map((o) => ({ version: o.version, e: o.jobs[k].edits.filter((x) =>
+            x.id === e.id && x.plan === 'refused-ambiguous')[0] })).filter((o) => o.e)[0];
+        if (elsewhere) {
+            e.plan = 'refused-ambiguous';
+            e.found = elsewhere.e.found;
+            e.patch = elsewhere.e.patch;
+            job.refused += 1;
+            job.problems.push(refusal(e) + ' as MainApp ' + elsewhere.version + ' has it');
+            job.state = null;
+            job.target = null;
+        }
+    }));
+}
+
 function skippedEdits(jobs) {
     return [].concat.apply([], jobs.map((j) => j.edits))
         .filter((e) => !isHelper(e) && e.plan === 'skipped-not-found');
@@ -929,10 +951,12 @@ function runCommand(command, paths, log, mainapps) {
     let chosen = null;
     let jobs = null;
     let best = null;
+    const others = [];
     for (let i = 0; i < mainapps.length; i += 1) {
         const tried = prepare(command, paths, mainapps[i].sets, mainapps[i].known);
         const key = [tried.reduce((n, j) => n + j.problems.length, 0), tried.reduce((n, j) => n + j.refused, 0),
             skippedEdits(tried).length];
+        others.push({ version: mainapps[i].version, jobs: tried });
         if (!best || (key[0] - best[0] || key[1] - best[1] || key[2] - best[2]) < 0) {
             chosen = mainapps[i];
             jobs = tried;
@@ -941,6 +965,9 @@ function runCommand(command, paths, log, mainapps) {
         if (!key[0] && !key[1] && !key[2]) {
             break;
         }
+    }
+    if (command !== 'revert') {
+        refuseAmbiguousElsewhere(jobs, others.filter((o) => o.jobs !== jobs));
     }
     const known = chosen.known;
 
@@ -958,7 +985,7 @@ function runCommand(command, paths, log, mainapps) {
     });
 
     const result = { version: VERSION, command, state: overallState(jobs), changed: false,
-        mainapp: best[0] ? null : chosen.version, mainappVersion: mainappVersion(paths.main),
+        mainapp: jobs.some((j) => j.problems.length) ? null : chosen.version, mainappVersion: mainappVersion(paths.main),
         fingerprint: sha256(jobs.map((j) => j.kind + ':' + (j.stockSha256 || j.sha256)).join('\n')).slice(0, 16),
         files: jobs.map((j) => ({ kind: j.kind, path: j.path, sha256: j.sha256, stockSha256: j.stockSha256,
             reference: j.reference, state: j.state, patchedBy: j.patchedBy, problems: j.problems })) };
@@ -1052,7 +1079,7 @@ function refresh(result, jobs, known) {
     result.state = overallState(jobs);
     result.edits = [].concat.apply([], jobs.map((j) => j.edits.map((e) => {
         const carried = j.wrote === 'apply' ? e.plan === 'apply' : j.wrote === 'revert' ? false : e.carried;
-        return { id: e.id, title: EDIT_TITLES[e.id] || 'predicate copy in ' + e.id.slice('helper:'.length),
+        return { id: e.id, title: EDIT_TITLES[e.id] || (isHelper(e) ? 'predicate copy in ' + e.id.slice('helper:'.length) : e.id),
             file: j.kind, required: e.required,
             result: carried ? 'applied' : e.plan === 'apply' ? 'not-applied' : e.plan,
             found: e.found, expected: e.patch[2], anchor: e.patch[0].slice(0, 60) };
@@ -1282,8 +1309,8 @@ function main(argv) {
     const log = json ? () => {} : out;
     const r = run(command, paths, log, null, null, unit);
     const written = record(r, log);
-    if (command === 'check' && written) {
-        r.result.record = written;
+    if (command === 'check' && recordFile) {
+        r.result.record = written || readRecord(recordFile);
     }
     if (json) {
         out(JSON.stringify(r.result));

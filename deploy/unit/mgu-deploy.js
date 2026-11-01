@@ -1805,7 +1805,7 @@ function privacyApplyAndBounce(state) {
     }
     say('app-privacy: ' + (result.state || 'applied') + (result.changed ? ' (applied now)' : ''));
     var skipped = privacySkipped(result.edits);
-    if (skipped) say('app-privacy: ' + skipped);
+    if (skipped && skipped !== privacySkippedSaid) say('app-privacy: ' + (privacySkippedSaid = skipped));
     /* MainApp-21 is never bounced: it loads the bundles at its next start,
      * as it takes app changes (app-privacy reports nextStart) */
     if (isId8()) {
@@ -1819,6 +1819,7 @@ function privacyApplyAndBounce(state) {
 /* app-privacy's per-edit results (1.7.0 on) in one line, when it left out
  * privacy-only edits whose anchors this MainApp lacks: "11 of 12 privacy
  * edits applied; skipped: <title>, ..."; '' otherwise. */
+var privacySkippedSaid = '';
 function privacySkipped(edits) {
     if (!Array.isArray(edits)) return '';
     var privacy = edits.filter(function (e) { return e && !e.required && String(e.id).indexOf('helper:') !== 0; });

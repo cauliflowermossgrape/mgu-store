@@ -117,6 +117,8 @@ node patch_mainapp.js apply [--json]     # 0 patched, 2 refused, 1 write error
 node patch_mainapp.js revert [--json]    # 0 unpatched, 2 refused, 1 write error
 ```
 
+`--record PATH` writes the record (see "Record") to PATH.
+
 The tool patches the MainApp oapcontroller starts: MainApp-21 when the
 kernel command line says `hwgen=21` or later, else iDrive 7's MainApp.
 `--unit ID7|ID8` names it instead. `--main PATH` / `--appmanagement PATH`
@@ -188,11 +190,11 @@ calls it.
   (`skipped-not-found`), and so is one whose predicate copy's anchor does
   not occur; the rest is applied and the bundles count as `patched`;
 - any anchor that occurs more often than expected, or less but at least
-  once, refuses everything;
-- the bundles take the edits of the unit's MainApp release that fit them
-  with the fewest left out, the newest on a tie. A MainApp release this
-  tool does not know takes the newest release's edits that fit it; its
-  required edits must still fit exactly.
+  once, refuses everything, also when another release's edit for the same
+  site is the one left out;
+- the bundles take the edits of the known MainApp release that fit them
+  with the fewest left out, the newest on a tie. So does a MainApp release
+  this tool does not know; its required edits must still fit exactly.
 
 ## Record
 

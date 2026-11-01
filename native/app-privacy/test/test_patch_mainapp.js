@@ -1451,6 +1451,7 @@ test('MainApp 8.2.10 bundles patch, parse and revert exactly', () =>
 // Each unit's MainApp releases, with the edits our apps need there.
 const RELEASES = [
     ['ID7', '8.3.2', () => patcher.PATCH_SETS, ['crash-gate', 'crash-count', 'package-source', 'keychain-time']],
+    ['ID7', '8.2.10', () => patcher.PATCH_SETS_8_2_10, ['crash-gate', 'crash-count', 'package-source', 'keychain-time']],
     ['ID7', '8.1.1', () => patcher.PATCH_SETS_8_1_1, ['crash-gate', 'crash-count', 'package-source', 'keychain-time']],
     ['ID8', '9.3.4', () => patcher.PATCH_SETS_21, ['crash-gate', 'crash-count', 'package-source']],
     ['ID8', '9.2.15', () => patcher.PATCH_SETS_21_9_2_15, ['crash-gate', 'crash-count', 'package-source']]
@@ -1556,7 +1557,9 @@ test('an optional anchor with no occurrence is skipped and the rest applied, on 
             assert.strictEqual(r.code, 0, release[1] + ' ' + id + ': ' + r.stdout);
             let json = lastJson(r.stdout);
             assert.strictEqual(json.state, 'patched');
-            assert.strictEqual(json.mainapp, release[1]);
+            // without its sweep anchor an 8.2.10 bundle fits 8.3.2's edits as
+            // well, the same ones; the newer release is named
+            assert.strictEqual(json.mainapp, release[1] === '8.2.10' && id === 'update-availability-sweep' ? '8.3.2' : release[1]);
             assert.deepStrictEqual(json.skipped, [id]);
             assert.strictEqual(resultOf(json, id).result, 'skipped-not-found');
             assert.strictEqual(resultOf(json, id).found, 0);
@@ -1617,15 +1620,22 @@ test('more occurrences than expected, or fewer but some, refuse everything', () 
             r = runTool(b.args('check'));
             assert.strictEqual(r.code, 2);
         }));
-    // one release's anchor doubled where another release's edits fit: those
-    // are applied, and none of them touches the doubled text
+    // one release's anchor doubled where another release's edit for the
+    // same site is not found: refused all the same
     withMainapp('ID7', patcher.PATCH_SETS, '8.3.2', (b) => {
         const site = anchorOf(patcher.PATCH_SETS, 'update-availability-sweep');
         fs.appendFileSync(b.paths.main, '\nextra();' + site.patch[0]);
-        const r = runTool(b.args('apply'));
-        assert.strictEqual(r.code, 0, r.stdout);
-        assert.strictEqual(lastJson(r.stdout).mainapp, '8.2.10');
-        assert.strictEqual(b.read('main').split(site.patch[0]).length - 1, 2);
+        const before = b.read('main');
+        let r = runTool(b.args('apply'));
+        assert.strictEqual(r.code, 2, r.stdout);
+        const json = lastJson(r.stdout);
+        assert.strictEqual(json.mainapp, null);
+        assert.deepStrictEqual([resultOf(json, 'update-availability-sweep').result, resultOf(json, 'update-availability-sweep').found],
+            ['refused-ambiguous', 2]);
+        assert.strictEqual(b.read('main'), before);
+        assert.strictEqual(runTool(b.args('check')).code, 2);
+        // revert needs only the edits to come off
+        assert.strictEqual(runTool(b.args('revert')).code, 0);
     });
     // an anchor expected twice and found once
     withMainapp('ID7', patcher.PATCH_SETS, '8.3.2', (b) => {
@@ -1824,7 +1834,7 @@ test('the record keeps the last 8 fingerprints and 20 history lines; a refused r
         }
         record = b.readRecord();
         assert.strictEqual(record.history.length, patcher.RECORD_HISTORY);
-        // the latest run is kept whatever the clock says
+        // a refused run is the latest entry
         b.edit('main', anchorOf(patcher.PATCH_SETS, 'crash-gate').patch[0], 'gone()');
         const r = runTool(b.args('apply'));
         assert.strictEqual(r.code, 2);
@@ -1870,7 +1880,7 @@ test('boot applies with the same rules and records the run', () => {
     });
 });
 
-test('an earlier release\'s whole edits are upgraded where this release skips one', () => withBundles((b) => {
+test('a bundle with all of an earlier release\'s edits is named as patched by it and upgraded', () => withBundles((b) => {
     const stock = b.read('main');
     const earlier = patcher.applyPatches(stock, patcher.EARLIER_PATCH_SETS[1].main);
     fs.writeFileSync(b.paths.main, earlier);

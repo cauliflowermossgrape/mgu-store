@@ -52,8 +52,9 @@ on the unit, it is made installable, or any MainApp bounce):
   is true and MainApp is running, bounce MainApp's node child (kill it;
   `oapcontroller` respawns it) before placing the app. Never stop or
   restart `oapcontroller`.
-- Exit 2: refused (a required edit does not fit, or an anchor occurs more
-  often than expected; nothing written). Refuse the app install.
+- Exit 2: refused (a required edit does not fit, or an anchor occurs
+  other than as expected without being absent; nothing written). Refuse
+  the app install.
 - Any other exit, or no tool at that path: refuse the app install. The
   component is installed before any app (the installers install tools
   first, `app-privacy` first of all).

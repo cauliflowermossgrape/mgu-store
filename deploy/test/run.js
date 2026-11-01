@@ -2329,6 +2329,13 @@ function testPrivacySkipped() {
         r.out.includes('app-privacy: 2 of 3 privacy edits applied; skipped: update availability sweep') &&
         root.entry('fixture_app') && fs.existsSync(root.entry('fixture_app')), r.out);
     root = fakeRoot();
+    root.env.FAKE_PRIVACY_SKIPPED = 'update-availability-sweep';
+    r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true),
+        '--artifact', appArtifact('fixture_two', '1.0.0', true), '--yes']);
+    check('privacy skipped: two apps in one run name the skipped edits once',
+        r.status === 0 && r.out.split('\n').filter((l) => l.indexOf('privacy edits applied') >= 0).length === 1 &&
+        fs.existsSync(root.entry('fixture_two')), r.out);
+    root = fakeRoot();
     r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
     check('privacy skipped: with every edit applied there is no skipped line',
         r.status === 0 && !r.out.includes('privacy edits applied'), r.out);
