@@ -3865,12 +3865,6 @@ function rootFreeKB() {
     return r.status === 0 && Number(f[3]) >= 0 ? Number(f[3]) : Infinity;
 }
 function uidsFile() { return path.join(mgrHome(), 'security', 'uids.txt'); }
-/* uids.txt's lines for an app id */
-function uidLines(id) {
-    try {
-        return fs.readFileSync(uidsFile(), 'utf8').split('\n').filter(function (l) { return l.split('=')[1] === id; });
-    } catch (e) { return []; }
-}
 /* One queued change, at boot with MainApp not running. The das edits are
  * worked out before anything moves, so a das file without its anchors
  * fails the change with nothing changed. An update returns what it moved
@@ -4407,14 +4401,13 @@ function boundToCopy() {
     return !!st && st.dev === copy.dev && st.ino === copy.ino;
 }
 /* Binds the fallback copy over main.js; with no copy there, main.js stays
- * the stock file. True when bound. */
+ * the stock file. */
 function bindCopy() {
     if (!fs.existsSync(FALLBACK_COPY)) {
         warn('no fallback copy at ' + FALLBACK_COPY + ': main.js stays the stock file');
-        return false;
+        return;
     }
     runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
-    return true;
 }
 /* Unmounts every bind over main.js that is not the fallback copy as it is
  * now. True when one went. */
@@ -5296,7 +5289,7 @@ function beginAppTx(tx, a, existing) {
     tx.homes = fs.existsSync(CFG.oap) ? fs.readdirSync(CFG.oap) : [];
     tx.custom = fs.existsSync(customAppsFile()) ? sha256File(customAppsFile()) : null;
     tx.fallback = fallbackPresent();
-    tx.uidLine = uidLines(a.id).length > 0;
+    tx.fresh = !existing;
     if (existing) saveAppFolders(tx, a, existing);
 }
 /* MainApp's update of an app unregisters it (its tile goes), deletes its
@@ -5364,13 +5357,16 @@ function rollbackApp(a, tx, backup, state) {
     if (fallbackPresent() !== tx.fallback || custom !== tx.custom) settleFallback();
     pruneCreatedDirs(state);
     /* a first install the manager stopped after it gave the app a uid
-     * leaves that uid's line; the file is written in place, so it keeps
-     * its owner, mode and ACLs */
-    var left = tx.uidLine || lstatOrNull(appEntryFile(a.id)) ? [] : uidLines(a.id);
-    if (left.length) {
-        var keep = fs.readFileSync(uidsFile(), 'utf8').split('\n').filter(function (l) { return l.split('=')[1] !== a.id; });
-        fs.writeFileSync(uidsFile(), keep.join('\n'));
-        say('removed ' + left.join(', ') + ' from ' + uidsFile());
+     * leaves that uid's line, as did earlier failed attempts: with no
+     * registry entry, every line of the app goes. The file is written in
+     * place, so it keeps its owner, mode and ACLs. */
+    if (tx.fresh && !lstatOrNull(appEntryFile(a.id)) && fs.existsSync(uidsFile())) {
+        var lines = fs.readFileSync(uidsFile(), 'utf8').split('\n');
+        var left = lines.filter(function (l) { return l.split('=')[1] === a.id; });
+        if (left.length) {
+            fs.writeFileSync(uidsFile(), lines.filter(function (l) { return left.indexOf(l) < 0; }).join('\n'));
+            say('removed ' + left.join(', ') + ' from ' + uidsFile());
+        }
     }
     /* the running manager no longer has the app registered: a restarted
      * one loads it from its registry entry and folders, tile and all */

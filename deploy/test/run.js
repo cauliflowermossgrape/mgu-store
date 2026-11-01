@@ -784,6 +784,26 @@ function testMainBind() {
         `${r.out}\nbinds: ${JSON.stringify(root.binds())} copy ${fs.existsSync(root.copy)}`);
     check('main.js bind: the rolled-back first install leaves no uids.txt line for the app',
         fs.readFileSync(uids, 'utf8') === '13000=stock_app\n', fs.readFileSync(uids, 'utf8'));
+    // a first install the manager rejects, rolled back, then restore stock, with a line an earlier attempt left
+    root = bindRoot();
+    const uids2 = root.p(`var/opt/public/oap/oap_${MGR}/security/uids.txt`);
+    root.run(['install', '--artifact', privacyArtifact(), '--yes']);
+    fs.appendFileSync(uids2, '13007=fixture_app\n');
+    const rj = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes'], { FAKE_MGR_REJECT: '1' });
+    check('main.js bind: a rejected first install, rolled back, leaves main.js stock or bound to the copy there is',
+        rj.status !== 0 && root.managerLog().includes('rejected install fixture_app 1.0.0') && root.bindSound(),
+        `${rj.out}\nbinds: ${JSON.stringify(root.binds())}`);
+    check('main.js bind: the rejected first install takes out the uids.txt line an earlier attempt left',
+        fs.readFileSync(uids2, 'utf8') === '13000=stock_app\n' && rj.out.includes('removed 13007=fixture_app'), `${fs.readFileSync(uids2, 'utf8')}\n${rj.out}`);
+    const rs = root.run(['restore', 'stock', '--yes']);
+    check('main.js bind: restore stock after the rejected install succeeds in one run, main.js stock',
+        rs.status === 0 && rs.out.includes('restored from stock') && root.binds().length === 0, rs.out);
+    // a failed first install of a second app with the fallback on: the copy it changed is bound again
+    root = bindRoot();
+    root.run(['install', '--artifact', privacyArtifact(), '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes']);
+    const second = root.run(['install', '--artifact', appArtifact('second_app', '1.0.0', true), '--yes'], { FAKE_MGR_REJECT: '1' });
+    check('main.js bind: with the fallback on, a rolled-back install leaves the copy there bound',
+        second.status !== 0 && root.binds().length === 1 && root.bindSound(), `${second.out}\nbinds: ${JSON.stringify(root.binds())}`);
     // restore stock in one run from a bind over a fallback copy deleted since
     root = bindRoot();
     root.run(['install', '--artifact', privacyArtifact(), '--yes']);
