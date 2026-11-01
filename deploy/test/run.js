@@ -942,6 +942,14 @@ function testFallback() {
     const fb655 = boot655.run(['fallback', 'on', '--yes']);
     check('MainApp 6.5.5 (.bundle.js): fallback on builds from main.bundle.js when main.js is a stub',
         fb655.status === 0 && fs.existsSync(boot655.p('var/opt/mgu-deploy/main.js')), fb655.out);
+    const hookStub = (input) => {
+        const out = path.join(fs.mkdtempSync(path.join(T, 'hook-')), 'main.js');
+        cp.execFileSync(UNIT_NODE, [path.join(HERE, '..', 'unit', 'fallback_build.js'), input, out, path.join(T, 'none.json')]);
+        return (/const stub=([^,]*),ops=/.exec(fs.readFileSync(out, 'utf8')) || [])[1];
+    };
+    check('in-place hook: the controller\'s appManager is the installer, without a controller (6.5.5) appManager itself',
+        hookStub(path.join(HERE, 'fixtures', 'main_queue.js')) === 'mgr&&mgr.appManager' &&
+        hookStub(path.join(HERE, 'fixtures', 'main.js')) === 'mgr&&(mgr.appManager||mgr)');
     const mounts655 = boot655.p('mounts.log');
     const cmd655 = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback.service'), 'utf8')
         .match(/^ExecStart=\/bin\/sh -c '(.*)'$/m)[1]

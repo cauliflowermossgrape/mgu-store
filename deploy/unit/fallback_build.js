@@ -118,9 +118,11 @@ var HOOK = 'if(isMainapp&&section===mainAppSection){' +
  * carries that trace each second, with the manager's network-retry count
  * and whether a retry delay or an NSM resume is pending. */
 /* iDrive 7: the AppManagerStub is the controller's appManager, or on
- * MainApp 6.5.5, which has no controller, the hook's appManager itself. */
-var ID7 = { start: '', stub: '_', installer: 'mgr&&(mgr.appManager||mgr)', run: '"update"===r.action?mgr.update(r.app,"PLATFORM"):' +
+ * MainApp 6.5.5, which has no controller (ID7_NO_CONTROLLER), the hook's
+ * appManager itself. */
+var ID7 = { start: '', stub: '_', installer: 'mgr&&mgr.appManager', run: '"update"===r.action?mgr.update(r.app,"PLATFORM"):' +
     '"uninstall"===r.action?mgr.uninstall(r.app):mgr.install(r.app)', args: '(appManager,appRegistry,logger)' };
+var ID7_NO_CONTROLLER = Object.assign({}, ID7, { installer: 'mgr&&(mgr.appManager||mgr)' });
 /* MainApp-21: its provisioning handler's anchor, the hook's (the start-up's
  * init, whose resolution the hook follows), the AppManagerStub's member
  * names without the underscore, the controller's calls with their options,
@@ -308,7 +310,8 @@ function main() {
         hook = p >= 0 && src.indexOf(INPLACE_ANCHOR, p + 1) < 0;
         if (hook) {
             p += INPLACE_ANCHOR.length;
-            src = src.slice(0, p) + inplaceSource(requestPath, statusPath, ID7) + src.slice(p);
+            src = src.slice(0, p) + inplaceSource(requestPath, statusPath,
+                src.indexOf('class AppManagementController{') >= 0 ? ID7 : ID7_NO_CONTROLLER) + src.slice(p);
         }
         var qa = src.indexOf(QUEUE_ANCHOR), ca = src.indexOf(CONTROLLER_ANCHOR);
         first = qa >= 0 && src.indexOf(QUEUE_ANCHOR, qa + 1) < 0 && ca >= 0 && src.indexOf(CONTROLLER_ANCHOR, ca + 1) < 0;

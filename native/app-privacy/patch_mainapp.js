@@ -509,20 +509,13 @@ function bundlePaths(root) {
 }
 /* MainApp 6.5.5 ships <name>.js as a bytecode-loader stub that reads and
  * runs <name>.bundle.js; 8.x and MainApp-21 ship the bundle in <name>.js.
- * The .bundle.js.bytecode cache is left in place: V8 rejects cached data
- * that no longer matches the edited source and compiles the source, and
- * revert restores the bundle byte for byte so the original cache applies
- * again. */
+ * The .bundle.js.bytecode cache is left in place: Node 8's V8 rejects
+ * cached data made for a source of another length, which every edit
+ * changes, and compiles the source; revert restores the bundle byte for
+ * byte so the original cache applies again. */
 function bundlePathFor(file) {
     const bundle = file.replace(/\.js$/, '.bundle.js');
-    try {
-        if (bundle !== file && fs.existsSync(bundle)) {
-            return bundle;
-        }
-    } catch (e) {
-        // use file
-    }
-    return file;
+    return bundle !== file && fs.existsSync(bundle) ? bundle : file;
 }
 function resolveBundlePaths(paths) {
     const out = {};

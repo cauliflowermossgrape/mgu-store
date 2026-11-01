@@ -251,7 +251,7 @@ function findPrelude(text) {
         return { end, prelude: text.slice(0, end) };
     }
     const min = text.indexOf(PRELUDE_END_MIN);
-    if (min >= 0 && /^\s*(?:\/\*[\s\S]*?\*\/\s*)?[!(]function\(\)\{return function r\(e,n,t\)\{/.test(text)) {
+    if (min >= 0 && /^\s*(?:\/\*[\s\S]*?\*\/\s*)?!function\(\)\{return function r\(e,n,t\)\{/.test(text)) {
         const end = min + PRELUDE_END_MIN.length;
         const raw = text.slice(0, end);
         return { end, prelude: raw.replace(/^(\s*(?:\/\*[\s\S]*?\*\/\s*)?)!(function\([\s\S]*\})\(\)$/, '$1($2)()') };
@@ -701,7 +701,7 @@ function build(srcDir, outFile, opts) {
 /* ---- module mode: OAP packages built elsewhere ------------------------------------ */
 
 const REQUIRES_SDK = /require\(\s*(['"])oap-sdk\1\s*\)/;
-const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:\(function\(\)\{(?:return )?function r\(e,n,t\)\{|!function\(\)\{return function r\(e,n,t\)\{)/;
+const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:\(function\(\)\{function r\(e,n,t\)\{|!function\(\)\{return function r\(e,n,t\)\{)/;
 
 /* Whether the package's own javascript calls require('oap-sdk') with no
  * node_modules/oap-sdk to answer it. Browserify bundles resolve their
