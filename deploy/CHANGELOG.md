@@ -1,5 +1,10 @@
 # Deploy tool changelog
 
+## 0.7.4
+
+- `main.js` is bound only to the fallback copy as it is. A failed first app install, a restore or a rollback that removes or replaces the copy unmounts the bind left on the old file, and binds the copy there again while the fallback's unit is present; with no copy, `main.js` stays the stock file. `restore` and app-privacy's revert first unmount such a bind, so `restore stock` succeeds in one run from it, and never bind a copy that is not there.
+- A failed first install of an app takes out the `uids.txt` line the app manager gave it before it stopped, written in place: the file keeps its owner, mode and ACLs.
+
 ## 0.7.6
 
 - iDrive 7 with MainApp 6.5.5: app installs and updates work. Its `main.js` and `AppManagement.js` are bytecode-loader stubs, so the provisioning fallback copy is built from `main.bundle.js` and bound over it, and the tool reads `AppManagement.bundle.js`. Its manager has no `AppManagementController`, so the in-place hook works with its `AppManagerStub` directly; a fresh app the restarted manager has not installed by itself once started up is installed in place.

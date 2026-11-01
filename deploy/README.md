@@ -1275,7 +1275,9 @@ When one fails, only its changes are undone: its new version folder (no
 `versions/` without `current`), a socket it started whose unit is removed
 again, its preinstalled package, its `custom_apps.json` entry, an app home
 the manager created for it during the attempt, and the fallback when this
-install turned it on (the copy is rebuilt or unbound to match). Artifacts
+install turned it on (the copy is rebuilt or unbound to match). A first
+install of an app that fails also takes out the `uids.txt` line the manager
+gave it, written in place so the file keeps its owner, mode and ACLs. Artifacts
 installed before it in the same call stay installed, and the output says so
 (the updater installs one artifact per call). The app-privacy patch stays
 applied after a failed app install while the app-privacy tool is installed.
@@ -1390,7 +1392,11 @@ manager runs it from its next start: the boot unit's build, or the build
 this tool writes before it restarts the manager.
 
 The copy, with the app-privacy patch applied to it, is `/var/opt/mgu-deploy/main.js`,
-bind-mounted over the stock file; a rebuild unmounts the old copy, builds
+bind-mounted over the stock file. `main.js` is only ever bound to the copy
+as it is: a bind left on a copy deleted or replaced since (a bind keeps the
+file it was made with) is unmounted by the next restore, rollback or
+app-privacy revert, and the copy there bound again while the fallback's
+unit is present; with no copy, `main.js` stays the stock file. A rebuild unmounts the old copy, builds
 from the stock file and binds the copy again, rewritten only when its bytes
 change. An app install or uninstall keeps the copy the running manager runs
 when it announced its hook and the new build has the same hook (a newer
