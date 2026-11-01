@@ -7,7 +7,7 @@ paths; the patch in this directory makes each of them skip local-only
 apps. It also makes MainApp only restart a local-only app that crashed.
 Genuine backend-delivered apps are reported, updated, diagnosed and
 recovered exactly as before. It covers iDrive 7's MainApp 8.3.2,
-8.2.10 and 8.1.1 (`/usr/lib/oap-mainapp`) and iDrive 8's MainApp-21 9.3.4 and
+8.2.10, 8.1.1 and 6.5.5 (`/usr/lib/oap-mainapp`) and iDrive 8's MainApp-21 9.3.4 and
 9.2.15 (`/usr/lib/oap-mainapp21`).
 
 ## Which apps are local-only
@@ -38,8 +38,10 @@ without the marker. Installers do not maintain it.
 ### iDrive 7
 
 All sites are in `/usr/lib/oap-mainapp/src/main.js` and
-`/usr/lib/oap-mainapp/src/AppManagement/AppManagement.js`. MainApp 8.1.1
-has no platform analytics, no update-availability sweep and no
+`/usr/lib/oap-mainapp/src/AppManagement/AppManagement.js` (on 6.5.5
+`main.bundle.js` and `AppManagement.bundle.js`, which the bytecode-loader
+stubs `main.js` and `AppManagement.js` run). MainApp 8.1.1 and 6.5.5
+have no platform analytics, no update-availability sweep and no
 `DiagOapProvider`, so those rows apply to 8.3.2 and 8.2.10 only.
 
 | Path | Site |
@@ -111,7 +113,7 @@ that rewrites all of it removes the unit too, and the component has to be
 installed again.
 
 ```sh
-node patch_mainapp.js --version          # app-privacy 1.7.0
+node patch_mainapp.js --version          # app-privacy 1.7.1
 node patch_mainapp.js check [--json]     # 0 patched, 1 unpatched, 2 mismatch
 node patch_mainapp.js apply [--json]     # 0 patched, 2 refused, 1 write error
 node patch_mainapp.js revert [--json]    # 0 unpatched, 2 refused, 1 write error
@@ -135,7 +137,7 @@ remounted read-write for the write only; a file bind-mounted over a bundle
 path is written in place. With `--json`, the last stdout line is
 `{"version","command","state","changed","files":[...],"edits":[...],"skipped":[...],"restartNeeded","unit","mainapp","mainappVersion","fingerprint"}`;
 `mainapp` names the MainApp release whose edits the bundles take (`8.3.2`,
-`8.2.10`, `8.1.1`, on iDrive 8 `9.3.4`, `9.2.15`; null on a mismatch),
+`8.2.10`, `8.1.1`, `6.5.5`, on iDrive 8 `9.3.4`, `9.2.15`; null on a mismatch; when releases share edits, a bundle carrying no stock fingerprint takes the first release's name),
 `mainappVersion` the installed MainApp's own version, `fingerprint` its
 stock bundles (the same patched or not). `edits` holds every edit's
 result (see "Record"), `skipped` the ids of the optional ones left out;
@@ -239,5 +241,5 @@ node native/app-privacy/patch_mainapp.js check-apps apps
 Set `FIRMWARE_MAINAPP_DIR` to a decoded oap-mainapp folder to also test
 against its bundles; `run.sh` passes it into the container.
 `FIRMWARE_MAINAPP21_DIR` does the same with a decoded MainApp-21 (9.3.4 or 9.2.15),
-`FIRMWARE_MAINAPP_8_1_1_DIR` and `FIRMWARE_MAINAPP_8_2_10_DIR` with a decoded
-oap-mainapp 8.1.1 or 8.2.10.
+`FIRMWARE_MAINAPP_8_1_1_DIR`, `FIRMWARE_MAINAPP_8_2_10_DIR` and `FIRMWARE_MAINAPP_6_5_5_DIR` with a decoded
+oap-mainapp 8.1.1, 8.2.10 or 6.5.5.

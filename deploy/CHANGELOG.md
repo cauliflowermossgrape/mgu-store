@@ -1,5 +1,9 @@
 # Deploy tool changelog
 
+## 0.7.6
+
+- iDrive 7 with MainApp 6.5.5: app installs and updates work. Its `main.js` and `AppManagement.js` are bytecode-loader stubs, so the provisioning fallback copy is built from `main.bundle.js` and bound over it, and the tool reads `AppManagement.bundle.js`. Its manager has no `AppManagementController`, so the in-place hook works with its `AppManagerStub` directly; a fresh app the restarted manager has not installed by itself once started up is installed in place.
+
 ## 0.7.5
 
 - iDrive 7: an app's SOME/IP manifest may name interfaces the head unit's firmware does not have (iDrive 8's, on older iDrive 7 firmware); MainApp refuses such an app (`IFConfigGenerator::generate() Interface … not found`). The app is installed with those interfaces taken out of its manifest, read against the firmware's interface database (`/etc/oap/someip/someip-interfaces.json`), and the output names them: `…, de.bmw.infotainment.hmi.entrypoint2.EntryPoint2 (not on this unit) taken out of manifest.json`. The certification service stays. iDrive 8 installs the manifest as it is.

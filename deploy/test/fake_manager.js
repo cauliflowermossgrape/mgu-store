@@ -212,9 +212,10 @@ function bounce() {
         }
     });
 
+    // $FAKE_MGR_NO_START_INSTALL: a start that installs no listed app (MainApp 6.5.5)
     const custom = customApps();
     Object.keys(custom).forEach((id) => {
-        if (!entries().some((e) => e.id === id)) install(id);
+        if (!env.FAKE_MGR_NO_START_INSTALL && !entries().some((e) => e.id === id)) install(id);
     });
 
     const retired = env.FAKE_MGR_RETIRED ? readJson(env.FAKE_MGR_RETIRED) : null;

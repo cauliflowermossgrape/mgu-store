@@ -935,6 +935,30 @@ function testFallback() {
     b = bootRun();
     check('boot unit: a copy that does not parse is not bound, the unit succeeds', b.status === 0 && !fs.existsSync(mounts) &&
         b.stderr.includes('SyntaxError'), `${b.stdout}${b.stderr}`);
+
+    // MainApp 6.5.5 shape: main.js is a bytecode-loader stub, main.bundle.js holds the bundle
+    const boot655 = fakeRoot({ main: '// bytecode-loader stub\n' });
+    write(boot655.p('usr/lib/oap-mainapp/src/main.bundle.js'), stockMain());
+    const fb655 = boot655.run(['fallback', 'on', '--yes']);
+    check('MainApp 6.5.5 (.bundle.js): fallback on builds from main.bundle.js when main.js is a stub',
+        fb655.status === 0 && fs.existsSync(boot655.p('var/opt/mgu-deploy/main.js')), fb655.out);
+    const hookStub = (input) => {
+        const out = path.join(fs.mkdtempSync(path.join(T, 'hook-')), 'main.js');
+        cp.execFileSync(UNIT_NODE, [path.join(HERE, '..', 'unit', 'fallback_build.js'), input, out, path.join(T, 'none.json')]);
+        return (/const stub=([^,]*),ops=/.exec(fs.readFileSync(out, 'utf8')) || [])[1];
+    };
+    check('in-place hook: the controller\'s appManager is the installer, without a controller (6.5.5) appManager itself',
+        hookStub(path.join(HERE, 'fixtures', 'main_queue.js')) === 'mgr&&mgr.appManager' &&
+        hookStub(path.join(HERE, 'fixtures', 'main.js')) === 'mgr&&(mgr.appManager||mgr)');
+    const mounts655 = boot655.p('mounts.log');
+    const cmd655 = fs.readFileSync(path.join(HERE, '..', 'unit', 'mgu-app-fallback.service'), 'utf8')
+        .match(/^ExecStart=\/bin\/sh -c '(.*)'$/m)[1]
+        .split('/usr/bin/node').join(UNIT_NODE).split('/var/opt/').join(boot655.p('var/opt/'))
+        .split('/usr/lib/').join(boot655.p('usr/lib/'));
+    const b655 = cp.spawnSync('sh', ['-c', `mount() { echo "$*" >> '${mounts655}'; }; ${cmd655}`], { encoding: 'utf8' });
+    check('MainApp 6.5.5 (.bundle.js): boot unit builds from and binds over main.bundle.js', b655.status === 0 &&
+        fs.readFileSync(mounts655, 'utf8').trim() ===
+        `--bind ${boot655.p('var/opt/mgu-deploy/main.js')} ${boot655.p('usr/lib/oap-mainapp/src/main.bundle.js')}`, `${b655.stdout}${b655.stderr}`);
 }
 
 /* The fallback built from the fixture main.js, run: its handle() is
@@ -1359,6 +1383,23 @@ function testMainApp811() {
         fr.status !== 0 && fr.out.includes('the app manager could not update fixture_app 1.1.0 after its restart') &&
         f.kills().length >= fk + 1, fr.out);
     stopHooked(f);
+}
+
+/* MainApp 6.5.5: main.js is a bytecode-loader stub that runs main.bundle.js,
+ * and its restarted manager installs no app at its start. */
+function testMainApp655() {
+    const root = fakeRoot({ mainapp811: true, main: '// bytecode-loader stub\n' });
+    write(root.p('usr/lib/oap-mainapp/src/main.bundle.js'), stockMain());
+    const r = root.run(['install', '--artifact', appArtifact('fixture_app', '1.0.0', true), '--yes'],
+        { FAKE_MGR_HOOK: '1', FAKE_MGR_NO_START_INSTALL: '1' });
+    const log = root.managerLog();
+    let killAt = -1;
+    log.forEach((l, i) => { if (l.startsWith('kill ')) killAt = i; });
+    check('MainApp 6.5.5: a fresh install through a bounce is made in place by the restarted manager',
+        r.status === 0 && root.kills().length === 1 && r.out.includes('through a bounce') &&
+        r.out.includes('installed in place by the app manager') && killAt >= 0 &&
+        log.indexOf('install fixture_app 1.0.0 uid 13001 in place') > killAt, `${r.out}\n${log.join('\n')}`);
+    stopHooked(root);
 }
 
 /* The certification service in the app's SOME/IP manifest: MainApp's install gets its keychain through it. */
@@ -5780,6 +5821,7 @@ const SUITES = [
     testInplace,
     testCertCopy,
     testMainApp811,
+    testMainApp655,
     testCertificationProxy,
     testUnknownInterfaces,
     testInterrupted,

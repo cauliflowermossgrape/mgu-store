@@ -52,7 +52,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 const MARKER_KEY = 'mguLocalOnly';
 const OAP_ROOT = '/var/opt/public/oap/';
 const OVERRIDE_FILE = OAP_ROOT + 'oap_12201/data/local-only-apps.json';
@@ -348,6 +348,14 @@ const MAIN_PATCHES_8_1_1 = [
 ];
 const PATCH_SETS_8_1_1 = { main: MAIN_PATCHES_8_1_1, appmanagement: APPMANAGEMENT_PATCHES_1_4_0.concat([certEdit(1)]) };
 
+// oap-mainapp 6.5.5. Its main.js and AppManagement.js are bytecode-loader
+// stubs that run main.bundle.js and AppManagement.bundle.js; its bundles
+// take 8.1.1's edits.
+const KNOWN_SHA256_6_5_5 = {
+    main: '78a37fcafdb780771226e9710de9911ffc9608e3be2a394360874f0ec16faa25',
+    appmanagement: 'f53e7e8a9775c36a136f38de89cebd8eec58cb88e079ce3ca5d4f1b1447b8200'
+};
+
 // oap-mainapp 8.2.10. Its update-availability sweep is
 // AppsAutoupdater._areUpdatesAvailable, which reads the registry as
 // this._appRegistry; its other edits are 8.3.2's.
@@ -499,6 +507,23 @@ const PATCH_SETS_21_9_2_15 = {
 function bundlePaths(root) {
     return { main: root + '/src/main.js', appmanagement: root + '/src/AppManagement/AppManagement.js' };
 }
+/* MainApp 6.5.5 ships <name>.js as a bytecode-loader stub that reads and
+ * runs <name>.bundle.js; 8.x and MainApp-21 ship the bundle in <name>.js.
+ * The .bundle.js.bytecode cache is left in place: Node 8's V8 rejects
+ * cached data made for a source of another length, which every edit
+ * changes, and compiles the source; revert restores the bundle byte for
+ * byte so the original cache applies again. */
+function bundlePathFor(file) {
+    const bundle = file.replace(/\.js$/, '.bundle.js');
+    return bundle !== file && fs.existsSync(bundle) ? bundle : file;
+}
+function resolveBundlePaths(paths) {
+    const out = {};
+    Object.keys(paths).forEach((k) => {
+        out[k] = bundlePathFor(paths[k]);
+    });
+    return out;
+}
 /* Each unit's MainApp releases, as { version, sets: { current, earlier },
  * known }, the first the one problems are reported for when no release's
  * edits fit. Only 8.3.2's bundles can carry an earlier app-privacy
@@ -507,7 +532,8 @@ const UNITS = {
     ID7: { paths: DEFAULT_PATHS, mainapps: [
         { version: '8.3.2', sets: { current: PATCH_SETS, earlier: EARLIER_PATCH_SETS }, known: KNOWN_SHA256 },
         { version: '8.2.10', sets: { current: PATCH_SETS_8_2_10, earlier: [] }, known: KNOWN_SHA256_8_2_10 },
-        { version: '8.1.1', sets: { current: PATCH_SETS_8_1_1, earlier: [] }, known: KNOWN_SHA256_8_1_1 }
+        { version: '8.1.1', sets: { current: PATCH_SETS_8_1_1, earlier: [] }, known: KNOWN_SHA256_8_1_1 },
+        { version: '6.5.5', sets: { current: PATCH_SETS_8_1_1, earlier: [] }, known: KNOWN_SHA256_6_5_5 }
     ] },
     ID8: { paths: bundlePaths('/usr/lib/oap-mainapp21'), mainapps: [
         { version: '9.3.4', sets: { current: PATCH_SETS_21, earlier: [] }, known: KNOWN_SHA256_21 },
@@ -943,10 +969,11 @@ function skippedEdits(jobs) {
 
 /* Prepares every file before writing any: a problem in one file leaves
  * both untouched. The files take the edits of the MainApp release whose
- * edits fit both with the fewest skipped, the first (newest) on a tie, so
- * a MainApp release this tool does not know takes the newest edits that
- * fit it; when none fit, the problems reported are those of the release
- * with the fewest, the first of them on a tie. */
+ * edits fit both with the fewest skipped, the first (newest) on a tie
+ * (when releases share edits, the one whose fingerprint the bundles
+ * carry), so a MainApp release this tool does not know takes the newest
+ * edits that fit it; when none fit, the problems reported are those of
+ * the release with the fewest, the first of them on a tie. */
 function runCommand(command, paths, log, mainapps) {
     let chosen = null;
     let jobs = null;
@@ -963,6 +990,15 @@ function runCommand(command, paths, log, mainapps) {
             best = key;
         }
         if (!key[0] && !key[1] && !key[2]) {
+            // A later release with the same edits (6.5.5 takes 8.1.1's)
+            // names the bundles when they carry its stock fingerprint,
+            // patched or not.
+            const twin = mainapps.slice(i + 1).filter((m) => m.sets.current === chosen.sets.current &&
+                tried.every((j) => j.stockSha256 === m.known[j.kind]))[0];
+            if (twin) {
+                chosen = twin;
+                jobs = prepare(command, paths, twin.sets, twin.known);
+            }
             break;
         }
     }
@@ -1278,7 +1314,7 @@ function main(argv) {
         }
     }
     unit = unit || detectUnit();
-    const paths = Object.assign({}, UNITS[unit].paths, given);
+    const paths = Object.assign({}, resolveBundlePaths(UNITS[unit].paths), given);
     // The unit's own bundles are recorded; others (a copy, a backup) only
     // with --record.
     recordFile = recordFile || (Object.keys(given).length ? null : RECORD_FILE);
@@ -1320,9 +1356,11 @@ function main(argv) {
 
 module.exports = {
     VERSION, MARKER_KEY, OVERRIDE_FILE, PREINSTALLED_DIR, HELPER_JS, PATCH_SETS, EARLIER_PATCH_SETS, KNOWN_SHA256,
-    PATCH_SETS_8_1_1, KNOWN_SHA256_8_1_1, PATCH_SETS_8_2_10, KNOWN_SHA256_8_2_10, PREINSTALLED_DIR_21, HELPER_JS_21, PATCH_SETS_21, KNOWN_SHA256_21,
+    PATCH_SETS_8_1_1, KNOWN_SHA256_8_1_1, KNOWN_SHA256_6_5_5, PATCH_SETS_8_2_10, KNOWN_SHA256_8_2_10,
+    PREINSTALLED_DIR_21, HELPER_JS_21, PATCH_SETS_21, KNOWN_SHA256_21,
     PATCH_SETS_21_9_2_15, KNOWN_SHA256_21_9_2_15,
-    UNITS, unitOf, EDIT_INFO, REQUIRED_EDITS, EDIT_TITLES, RECORD_FILE, RECORD_FINGERPRINTS, RECORD_HISTORY,
+    UNITS, unitOf, bundlePathFor, resolveBundlePaths,
+    EDIT_INFO, REQUIRED_EDITS, EDIT_TITLES, RECORD_FILE, RECORD_FINGERPRINTS, RECORD_HISTORY,
     classify, applyPatches, removePatches, run, stampPackage, checkApps, main
 };
 

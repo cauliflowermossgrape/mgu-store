@@ -70,6 +70,7 @@ const { pack, tgz, stampPackage, MTIME } = require('./oap_pack.js');
 
 const ENTRY_ID = 10000;
 const PRELUDE_END = 'return r})()';
+const PRELUDE_END_MIN = 'return o}}()';
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const APP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /* written by the build, never part of a source package */
@@ -184,8 +185,14 @@ function donorSources(file) {
                     .replace(/^[^\d]*/, '') || null;
             } catch (e) { /* no version */ }
         });
-        return members
-            .filter((m) => /^(?:package\/)?javascript\/[^/]+\.js$/.test(m.name))
+        let js = members.filter((m) => /^(?:package\/)?javascript\/[^/]+\.js$/.test(m.name));
+        if (!js.length) {
+            /* MainApp 6.5.5 preinstalled apps (e.g. x_call@3.7.2.tgz) keep
+             * bundle.js and <id>.js at the package root rather than under
+             * javascript/. */
+            js = members.filter((m) => /^(?:package\/)?[^/]+\.js$/.test(m.name));
+        }
+        return js
             .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
             .map((m) => ({ label: `${path.basename(file)}:${m.name}`, text: m.data.toString('utf8'), sdkVersion }));
     }
@@ -236,21 +243,40 @@ function splitBundle(text) {
     return splitInProcess(text);
 }
 
+/* The browserify prelude at the start of text ({ end, prelude }), or null:
+ * unminified bundles end with 'return r})()'; 6.5.5 UglifyJS-minified
+ * bundles (!function(){return function r(e,n,t){...return o}}()) end with
+ * 'return o}}()', parenthesized so var x = <prelude>(...) returns o. */
+function findPrelude(text) {
+    const idx = text.indexOf(PRELUDE_END);
+    if (idx >= 0) {
+        const end = idx + PRELUDE_END.length;
+        return { end, prelude: text.slice(0, end) };
+    }
+    const min = text.indexOf(PRELUDE_END_MIN);
+    if (min >= 0 && /^\s*(?:\/\*[\s\S]*?\*\/\s*)?!function\(\)\{return function r\(e,n,t\)\{/.test(text)) {
+        const end = min + PRELUDE_END_MIN.length;
+        const raw = text.slice(0, end);
+        return { end, prelude: raw.replace(/^(\s*(?:\/\*[\s\S]*?\*\/\s*)?)!(function\([\s\S]*\})\(\)$/, '$1($2)()') };
+    }
+    return null;
+}
+
 /* The context owns capture. No host function is exposed to donor code.
  * Anonymous function spacing is normalized for identical Node 8/host
  * bundles. Only string/number dependency ids survive serialization. */
 function splitInProcess(text) {
-    const idx = text.indexOf(PRELUDE_END);
-    if (idx < 0) {
+    const found = findPrelude(text);
+    if (!found) {
         throw new Error('no browserify prelude');
     }
     const sandbox = Object.create(null);
-    vm.runInNewContext(`var mods; function capture(m) { mods = m; }\ncapture${text.slice(idx + PRELUDE_END.length).replace(/;\s*$/, '')}`,
+    vm.runInNewContext(`var mods; function capture(m) { mods = m; }\ncapture${text.slice(found.end).replace(/;\s*$/, '')}`,
         sandbox, { timeout: SPLIT_TIMEOUT });
     if (!sandbox.mods || typeof sandbox.mods !== 'object') {
         throw new Error('no module map');
     }
-    const tight = /^\(\{\s*"?\d+"?:\[function\(/.test(text.slice(idx + PRELUDE_END.length, idx + PRELUDE_END.length + 64));
+    const tight = /^\(\{\s*"?\d+"?:\[function\(/.test(text.slice(found.end, found.end + 64));
     const mods = Object.create(null);
     Object.keys(sandbox.mods).forEach((id) => {
         const m = sandbox.mods[id];
@@ -261,7 +287,7 @@ function splitInProcess(text) {
         mods[id] = [tight ? source.replace(/^function \(/, 'function(') : source,
             JSON.parse(serializeDeps(m[1]))];
     });
-    return { prelude: text.slice(0, idx + PRELUDE_END.length), mods, tight };
+    return { prelude: found.prelude, mods, tight };
 }
 
 /* The one module id a require name has in the donor's dependency tables. */
@@ -440,7 +466,8 @@ function unitDonors(mainappDir, oapDir, opts) {
         try { pkg = read(path.join(home, 'source', 'package.json'), null); }
         catch (e) { return; }
         if (stock(pkg)) {
-            list(path.join(home, 'source', 'javascript'), /\.js$/).forEach((f) => out.push(f));
+            const js = list(path.join(home, 'source', 'javascript'), /\.js$/);
+            (js.length ? js : list(path.join(home, 'source'), /\.js$/)).forEach((f) => out.push(f));
         }
     });
     return out;
@@ -468,13 +495,14 @@ function packageEntry(file) {
             pkg = JSON.parse(meta.data.toString('utf8'));
             read = (rel) => members.filter((m) => m.name === root + rel).map((m) => m.data.toString('utf8'))[0];
         } else {
-            const root = path.join(path.dirname(file), '..');
+            const dir = path.dirname(file);
+            const root = fs.existsSync(path.join(dir, 'package.json')) ? dir : path.join(dir, '..');
             pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
             read = (rel) => (fs.lstatSync(path.join(root, rel)).isFile() ? fs.readFileSync(path.join(root, rel), 'utf8') : null);
         }
         const main = typeof pkg.main === 'string' ? path.posix.normalize(pkg.main) : '';
         const text = safeRel(main) && /\.js$/.test(main) ? read(main) : null;
-        return text && text.indexOf(PRELUDE_END) < 0 && text.indexOf('runnerConfig.json') >= 0 ?
+        return text && !findPrelude(text) && text.indexOf('runnerConfig.json') >= 0 ?
             { label: `${pkg.name}@${pkg.version}:${main}`, text } : null;
     } catch (e) {
         return null;
@@ -679,7 +707,7 @@ function build(srcDir, outFile, opts) {
 /* ---- module mode: OAP packages built elsewhere ------------------------------------ */
 
 const REQUIRES_SDK = /require\(\s*(['"])oap-sdk\1\s*\)/;
-const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?\(function\(\)\{function r\(e,n,t\)\{/;
+const BROWSERIFIED = /^\s*(?:\/\*[\s\S]*?\*\/\s*)?(?:\(function\(\)\{function r\(e,n,t\)\{|!function\(\)\{return function r\(e,n,t\)\{)/;
 
 /* Whether the package's own javascript calls require('oap-sdk') with no
  * node_modules/oap-sdk to answer it. Browserify bundles resolve their

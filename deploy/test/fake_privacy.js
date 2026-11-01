@@ -30,7 +30,8 @@ const sha = (p) => {
     }
 };
 const src = path.join(env.MGU_DEPLOY_MAINAPP || '/usr/lib/oap-mainapp', 'src');
-const paths = { main: path.join(src, 'main.js'), appmanagement: path.join(src, 'AppManagement', 'AppManagement.js') };
+const bundle = (f) => { const b = f.replace(/\.js$/, '.bundle.js'); return fs.existsSync(b) ? b : f; };
+const paths = { main: bundle(path.join(src, 'main.js')), appmanagement: bundle(path.join(src, 'AppManagement', 'AppManagement.js')) };
 const stock = { main: env.FAKE_PRIVACY_STOCK_MAIN, appmanagement: env.FAKE_PRIVACY_STOCK_APPMANAGEMENT };
 let explicit = false;
 for (let i = 1; i < argv.length; i += 1) {

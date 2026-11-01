@@ -1,5 +1,9 @@
 # app-privacy changelog
 
+## 1.7.1
+
+- iDrive 7: MainApp 6.5.5 is patched too, with the same effect as on 8.1.1: our apps are left out of its backend app inventory, backend-triggered and autonomous updates, app-repository queries and downloads and corrupt-app reports, and a crashed one is only restarted. On 6.5.5 `main.js` and `AppManagement.js` are bytecode-loader stubs, so the tool patches `main.bundle.js` and `AppManagement.bundle.js` beside them.
+
 ## 1.7.0
 
 - Edits are required or optional. Required: the crash recovery and its restart count, the package source (our apps are installed only from their own package) and, on iDrive 7, the keychain time limit. Optional: every edit that only keeps our apps out of a backend report or query. A MainApp whose bundles lack an optional edit's anchor is patched without that edit; one that lacks a required edit's anchor, or has any anchor more often than expected, is still refused with nothing written.
