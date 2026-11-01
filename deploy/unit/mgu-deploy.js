@@ -45,7 +45,7 @@ var cp = require('child_process');
 
 /* deploy/component.json's version; bumped when a file under deploy/unit/
  * changes. */
-var VERSION = '0.7.1';
+var VERSION = '0.7.5';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -1316,7 +1316,7 @@ function validateApp(file, dir, pkgDir) {
     checkPkg(file, pkg);
     var a = { kind: 'app', file: file, dir: dir, pkgDir: pkgDir, pkg: pkg, id: pkg.name, version: pkg.version };
     a.prepare = pkgDir !== dir || pkg.mguLocalOnly !== true || linker().needsSdk(pkgDir) ||
-        linker().needsCertification(pkgDir) ? 'package' : null;
+        linker().needsCertification(pkgDir) || linker().unknownInterfaces(pkgDir, unitInterfaces()).length ? 'package' : null;
     appHmi(a, file, pkg.mguHmi, [path.join(pkgDir, 'rhmiData'), path.join(dir, 'rhmiData')]);
     return a;
 }
@@ -1546,6 +1546,17 @@ function validateSource(file, dir) {
     appHmi(a, file, raw.mguHmi !== undefined ? raw.mguHmi : pkg.mguHmi, [path.join(dir, m.tree, 'rhmiData')]);
     return a;
 }
+/* The interface ids of iDrive 7's interface database, which MainApp
+ * installs an app's SOME/IP manifest against (oap_link.js
+ * unknownInterfaces); null on iDrive 8 and without one to read. */
+var UNIT_INTERFACES;
+function unitInterfaces() {
+    if (UNIT_INTERFACES !== undefined) return UNIT_INTERFACES;
+    var db = isId8() ? null : readJsonOrNull(path.join(CFG.etc, 'oap', 'someip', 'someip-interfaces.json'));
+    UNIT_INTERFACES = db && db.interfaces && typeof db.interfaces === 'object' && !Array.isArray(db.interfaces) ?
+        Object.keys(db.interfaces) : null;
+    return UNIT_INTERFACES;
+}
 /* The donor bundles on this unit, in search order (oap_link.js). */
 function unitDonors() {
     return linker().unitDonors(mainappRoot(), CFG.oap,
@@ -1558,22 +1569,25 @@ function unitDonors() {
  * compile) is refused. */
 /* System errors that are the unit's (space, I/O, limits), not a package's. */
 var ENV_ERRORS = ['ENOSPC', 'EDQUOT', 'EIO', 'EROFS', 'EMFILE', 'ENFILE', 'ENOMEM', 'EACCES', 'EPERM', 'EBUSY'];
+function unknownSaid(u) {
+    return u ? ', ' + u.dropped.join(', ') + ' (not on this unit) taken out of ' + u.manifest : '';
+}
 function prepareApp(a, stage) {
     if (!a.prepare) return a;
     var out = path.join(stage, 'built-' + a.id + '@' + a.version + '.tgz'), r, link = linker();
     try {
         if (a.prepare === 'build') {
-            r = link.build(a.dir, out, { donors: unitDonors(), workDir: stage });
+            r = link.build(a.dir, out, { donors: unitDonors(), workDir: stage, interfaces: unitInterfaces() });
             say('built ' + a.id + ' ' + a.version + ' from its source package (' + r.moduleCount +
                 ' modules, oap-sdk from ' + r.donor + (r.entry ? ', main from ' + r.entry : '') +
-                (r.certification ? ', the certification service added to ' + r.certification : '') + ')');
+                (r.certification ? ', the certification service added to ' + r.certification : '') + unknownSaid(r.unknown) + ')');
         } else {
-            r = link.preparePackage(a.pkgDir, out, { donors: unitDonors() });
+            r = link.preparePackage(a.pkgDir, out, { donors: unitDonors(), interfaces: unitInterfaces() });
             say('prepared ' + a.id + ' ' + a.version + ': marked local-only' +
                 (r.sdk ? ', node_modules/oap-sdk generated from ' + r.sdk.donor + ' (' + r.sdk.api.join(', ') + ')' : '') +
                 (r.shrinkwrap ? ', npm-shrinkwrap.json added' : '') +
                 (r.permissions.length ? ', ' + r.permissions.join(' and ') + ' added to permissions.json' : '') +
-                (r.certification ? ', the certification service added to ' + r.certification : ''));
+                (r.certification ? ', the certification service added to ' + r.certification : '') + unknownSaid(r.unknown));
         }
     } catch (e) {
         if (ENV_ERRORS.indexOf(e.code) >= 0) throw e;

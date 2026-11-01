@@ -171,8 +171,10 @@ class RenderClient extends EventEmitter {
 let frontCcu = null;
 let displayLanguage = null;
 const hmiContext = [];
+// interfaces the head unit lacks: building their proxy fails
+const absent = new Set();
 const someipBuilders = {
-    buildTypedProxy: (iface, instance) => Promise.resolve({
+    buildTypedProxy: (iface, instance) => absent.has(iface) ? Promise.reject(new Error(`no ${iface}`)) : Promise.resolve({
         iface, instance,
         init: () => Promise.resolve(),
         waitUntilAvailable: () => Promise.resolve(),
@@ -1724,7 +1726,34 @@ function runLanguage() {
     });
 }
 
-run().then(runWidgetsExtra).then(runLanguage).then(runDrawn).then(runTiming).then(() => {
+/* A head unit without one HMI context, or without either: the other's language, else English. */
+function runAbsentContext() {
+    const i18n = require(path.join(SRC, 'i18n.js'));
+    const check = () => (last(/^storeCheck\.0\.(Text|PrimaryText)=/) || '').split('=')[1];
+    hmiContext.length = 0;
+    displayLanguage = null;
+    absent.add('de.bmw.infotainment.hmi.hmicontext2.HMIContext2');
+    app._setupLanguage();
+    return tick().then(() => {
+        eq(hmiContext, ['de.bmw.infotainment.hmi.hmicontext.HMIContext HMI_CID'], 'only the HMI context the unit has');
+        displayLanguage('CHINESISCH_SIMPLE');
+        return tick();
+    }).then(() => {
+        eq(check(), '检查更新', 'the language follows the one HMI context');
+        i18n.setHmiLanguage(null);
+        app._forgetWritten();
+        app._render();
+        hmiContext.length = 0;
+        absent.add('de.bmw.infotainment.hmi.hmicontext.HMIContext');
+        app._setupLanguage();
+        return tick();
+    }).then(() => {
+        eq([hmiContext.length, check()], [0, 'Check for updates'], 'no HMI context: English');
+        absent.clear();
+    });
+}
+
+run().then(runWidgetsExtra).then(runLanguage).then(runAbsentContext).then(runDrawn).then(runTiming).then(() => {
     cleanUp();
     console.log(`store: ${checks} checks pass`);
     process.exit(0);
