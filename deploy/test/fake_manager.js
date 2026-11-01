@@ -26,6 +26,10 @@
  * provisioning pass (startupPass) on its own, as MainApp does once
  * provisioning reaches it.
  * With $FAKE_MGR_STAY_DOWN_AT set to n, the n-th kill respawns nothing.
+ * With $FAKE_MGR_REJECT set, a fresh install is rejected (a manifest naming
+ * an interface the unit does not have) and leaves nothing.
+ * With $FAKE_MGR_UID_ONLY set, a fresh install stops after its uids.txt
+ * line, with no registry entry.
  * With $FAKE_MGR_NO_KEYCHAIN set, a fresh install writes no keychain. With
  * $FAKE_MGR_NO_SOURCE set it is MainApp 8.1.1: an install or update records
  * no installationSource. The
@@ -105,12 +109,20 @@ function install(id, how, source) {
     let uid = range.min;
     while (used.has(uid)) uid += 1;
     const h = home(uid);
+    if (env.FAKE_MGR_REJECT) {
+        log(`rejected install ${id} ${pkg.version}`);
+        return null;
+    }
     unpack(pkg.file, path.join(h, 'source'));
     write(path.join(h, 'someipInterfaces', 'acl.json'), '{}\n');
     if (!env.FAKE_MGR_NO_KEYCHAIN) {
         write(path.join(h, 'security', 'joynrKeyChain.json'), '{"fake":true}\n');
     }
     fs.appendFileSync(path.join(mgr, 'security', 'uids.txt'), `${uid}=${id}\n`);
+    if (env.FAKE_MGR_UID_ONLY) {
+        log(`install ${id} ${pkg.version} stopped before its entry`);
+        return null;
+    }
     const e = { userId: uid, installationSource: source === undefined ? 'PREINSTALLED' : source,
         provisioningCache: sectionsOf()[id] || customApps()[id], configStateQueueIndex: null };
     if (env.FAKE_MGR_NO_SOURCE) delete e.installationSource;

@@ -34,7 +34,7 @@
  * Every absolute root and external command can be overridden through
  * MGU_DEPLOY_* environment variables (see CFG below).
  * MGU_DEPLOY_FAKE_ROOT=1 runs against plain directories: no mount
- * remounts, no bind mounts, no chown to unit uids; the app manager is
+ * remounts, no bind mounts (but MGU_DEPLOY_FAKE_BINDS's), no chown to unit uids; the app manager is
  * whatever MGU_DEPLOY_PS and MGU_DEPLOY_KILL show and kill. The
  * production paths are the defaults.
  */
@@ -45,7 +45,7 @@ var cp = require('child_process');
 
 /* deploy/component.json's version; bumped when a file under deploy/unit/
  * changes. */
-var VERSION = '0.7.6';
+var VERSION = '0.7.7';
 var HERE = __dirname;
 var MGR_UID = Number(process.env.MGU_DEPLOY_MAINAPP_UID || 12201);
 
@@ -557,7 +557,23 @@ function managerReport() {
     said.forEach(function (l) { out.push('oapcontroller said: ' + cut(l.replace(/^.*?\[\d+: /, '').replace(/\]$/, ''))); });
     return out;
 }
+/* MGU_DEPLOY_FAKE_BINDS (fake root only): the tests' table of bind mounts
+ * their mount and umount keep, one "<target>\t<source>\t<inode>" line each;
+ * with it, binds are made and looked at as on the unit. */
+var FAKE_BINDS = FAKE ? env('MGU_DEPLOY_FAKE_BINDS', '') : '';
+function fakeBind(file) {
+    var hit = null;
+    try {
+        fs.readFileSync(FAKE_BINDS, 'utf8').split('\n').forEach(function (l) {
+            var f = l.split('\t');
+            if (f[0] === file) hit = { source: f[1], ino: Number(f[2]) };
+        });
+    } catch (e) { /* no binds */ }
+    return hit;
+}
+function binds() { return !FAKE || !!FAKE_BINDS; }
 function bindMounted(file) {
+    if (FAKE_BINDS) return !!fakeBind(file);
     try {
         return fs.statSync(file).dev !== fs.statSync(path.dirname(file)).dev;
     } catch (e) { return false; }
@@ -899,7 +915,7 @@ function writeSnapshot(dir, command, paths) {
     paths.forEach(function (p) {
         /* the copy bound over main.js is not main.js: a snapshot copies
          * main.js only while nothing is bound over it */
-        if (p === mainJs() && !FAKE && bindMounted(p)) return;
+        if (p === mainJs() && binds() && bindMounted(p)) return;
         var e = snapshotEntry(p);
         if (e.kind === 'file') {
             e.stored = 'files/' + n;
@@ -999,7 +1015,7 @@ function restoreSnapshot(dir, only) {
     var rootEntries = [], plain = [], lb = lastBounceAt();
     /* A snapshot holding main.js itself compares and restores the file
      * under the fallback copy; the caller binds the copy again. */
-    if (!FAKE && bindMounted(mainJs()) &&
+    if (binds() && bindMounted(mainJs()) &&
         data.entries.some(function (e) { return e.path === mainJs() && e.kind === 'file'; })) {
         runOk(CFG.umount, [mainJs()]);
     }
@@ -1017,6 +1033,9 @@ function restoreSnapshot(dir, only) {
         });
         rootfsWindow(ops);
     }
+    /* a copy put back or removed while bound leaves main.js on the file it
+     * replaced: the copy there is bound again while its unit is */
+    if (dropStaleBind() && fallbackPresent()) bindCopy();
     if (lb) recordBounce(lb);
     return data;
 }
@@ -2546,11 +2565,12 @@ function privacyApplyQuiet(extra) {
 function privacyRevert() {
     var tool = privacyTool();
     if (!fs.existsSync(tool)) return false;
+    dropStaleBind();
     var changed = privacyRevertRun(tool, '');
-    if (!FAKE && bindMounted(mainJs())) {
+    if (binds() && bindMounted(mainJs())) {
         runOk(CFG.umount, [mainJs()]);
         try { changed = privacyRevertRun(tool, ' (stock main.js under the fallback copy)') || changed; }
-        finally { runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]); }
+        finally { bindCopy(); }
     }
     return changed;
 }
@@ -2943,7 +2963,7 @@ function ensureCertCopy() {
     }
 }
 function bindCertCopy() {
-    var stock = certManagerJs(), wasBound = !FAKE && bindMounted(stock), built;
+    var stock = certManagerJs(), wasBound = binds() && bindMounted(stock), built;
     if (!wasBound && !fs.existsSync(stock)) return;
     if (wasBound) runOk(CFG.umount, [stock]);
     try { built = certCopySource(fs.readFileSync(stock, 'utf8')); } catch (e) { built = null; }
@@ -2966,7 +2986,7 @@ function bindCertCopy() {
     if (!wasBound) say('keychain wait of MainApp\'s installs: ' + CERT_WAIT_S + ' s, its failures explained (' + CERT_COPY + ')');
 }
 function unbindCertCopy() {
-    if (!FAKE && bindMounted(certManagerJs())) runOk(CFG.umount, [certManagerJs()]);
+    if (binds() && bindMounted(certManagerJs())) runOk(CFG.umount, [certManagerJs()]);
     rmrf(CERT_COPY);
 }
 
@@ -4326,7 +4346,7 @@ function buildPatchedCopy(input) {
 }
 /* Before a change: the copy can be built (main.js not bound yet). */
 function preflightFallback() {
-    if (!FAKE && bindMounted(mainJs())) return;
+    if (binds() && bindMounted(mainJs())) return;
     if (!fs.existsSync(fallbackUnitSource())) throw refuse(FALLBACK_UNIT + ' missing beside mgu-deploy.js');
     rmrf(buildPatchedCopy());
 }
@@ -4342,14 +4362,14 @@ function preflightFallback() {
  * keeps installing in place, with no bounce, and the boot unit builds the
  * new copy at the next start. True when it stayed. */
 function rebuildFallback(keepRunning) {
-    var wasBound = !FAKE && bindMounted(mainJs()), tmp, kept = false;
+    var wasBound = binds() && bindMounted(mainJs()), tmp, kept = false;
     /* asked while main.js is still bound: the wait for a young manager never leaves the stock file exposed */
     var running = keepRunning && (FAKE || wasBound) ? inplaceManager().pid || null : null;
     if (wasBound) runOk(CFG.umount, [mainJs()]);
     try {
         tmp = buildPatchedCopy();
     } catch (e) {
-        if (wasBound && fs.existsSync(FALLBACK_COPY)) runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
+        if (wasBound) bindCopy();
         throw e;
     }
     var built = fs.readFileSync(tmp);
@@ -4359,7 +4379,7 @@ function rebuildFallback(keepRunning) {
         else copyFileMode(tmp, FALLBACK_COPY, 0o644);
     }
     rmrf(tmp);
-    if (!FAKE) runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
+    if (binds()) bindCopy();
     if (fs.existsSync(privacyTool())) privacyApplyQuiet(null);
     return kept;
 }
@@ -4370,8 +4390,38 @@ function sameHook(built) {
     var hook = inplaceHookOf(cur);
     return hook !== null && hook === inplaceHookOf(built);
 }
+/* Whether main.js is bound to the fallback copy as it is now: a bind
+ * keeps the file it was made with, so a copy deleted or replaced since
+ * leaves main.js on a file that is not the copy. */
+function boundToCopy() {
+    var copy = statOrNull(FALLBACK_COPY), st;
+    if (!copy) return false;
+    if (FAKE_BINDS) { st = fakeBind(mainJs()); return !!st && st.ino === copy.ino; }
+    st = statOrNull(mainJs());
+    return !!st && st.dev === copy.dev && st.ino === copy.ino;
+}
+/* Binds the fallback copy over main.js; with no copy there, main.js stays
+ * the stock file. */
+function bindCopy() {
+    if (!fs.existsSync(FALLBACK_COPY)) {
+        warn('no fallback copy at ' + FALLBACK_COPY + ': ' + mainJs() + ' stays the stock file');
+        return;
+    }
+    runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
+}
+/* Unmounts every bind over main.js that is not the fallback copy as it is
+ * now. True when one went. */
+function dropStaleBind() {
+    var dropped = false;
+    while (binds() && bindMounted(mainJs()) && !boundToCopy()) {
+        say(mainJs() + ' was bound to a file that is not the fallback copy at ' + FALLBACK_COPY + ': unmounted');
+        runOk(CFG.umount, [mainJs()]);
+        dropped = true;
+    }
+    return dropped;
+}
 function unbindFallback() {
-    var wasBound = !FAKE && bindMounted(mainJs());
+    var wasBound = binds() && bindMounted(mainJs());
     if (wasBound) runOk(CFG.umount, [mainJs()]);
     rmrf(FALLBACK_COPY);
     /* The boot unit binds the copy before app-privacy's boot run, so the
@@ -4609,11 +4659,11 @@ function migrateRetired(state, plan) {
     var before = tileMap(), fbWas = fallbackPresent(), bounced = false, backup;
     /* what the manager loads: main.js as bound, AppManagement.js, the copy */
     var loads = function () { return [mainJs(), appManagementJs(), FALLBACK_COPY].map(shaOrNull).join(' '); };
-    var loadedBefore = loads(), wasBound = !FAKE && bindMounted(mainJs());
+    var loadedBefore = loads(), wasBound = binds() && bindMounted(mainJs());
     /* the snapshot copies the main.js under the fallback copy */
     if (wasBound) runOk(CFG.umount, [mainJs()]);
     try { backup = takeSnapshot('migrate', retiredTouched(plan)); }
-    catch (e) { if (wasBound) runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]); throw e; }
+    catch (e) { if (wasBound) bindCopy(); throw e; }
     try {
         plan.apps.forEach(function (a) {
             customAppsPut(a.id, a.entry.provisioningCache);
@@ -5239,6 +5289,7 @@ function beginAppTx(tx, a, existing) {
     tx.homes = fs.existsSync(CFG.oap) ? fs.readdirSync(CFG.oap) : [];
     tx.custom = fs.existsSync(customAppsFile()) ? sha256File(customAppsFile()) : null;
     tx.fallback = fallbackPresent();
+    tx.fresh = !existing;
     if (existing) saveAppFolders(tx, a, existing);
 }
 /* MainApp's update of an app unregisters it (its tile goes), deletes its
@@ -5305,6 +5356,18 @@ function rollbackApp(a, tx, backup, state) {
     if (fallbackPresent() !== tx.fallback) runOk(CFG.systemctl, ['daemon-reload']);
     if (fallbackPresent() !== tx.fallback || custom !== tx.custom) settleFallback();
     pruneCreatedDirs(state);
+    /* a first install the manager stopped after it gave the app a uid
+     * leaves that uid's line, as did earlier failed attempts: with no
+     * registry entry, every line of the app goes. The file is written in
+     * place, so it keeps its owner, mode and ACLs. */
+    if (tx.fresh && !lstatOrNull(appEntryFile(a.id)) && fs.existsSync(uidsFile())) {
+        var lines = fs.readFileSync(uidsFile(), 'utf8').split('\n');
+        var left = lines.filter(function (l) { return l.split('=')[1] === a.id; });
+        if (left.length) {
+            fs.writeFileSync(uidsFile(), lines.filter(function (l) { return left.indexOf(l) < 0; }).join('\n'));
+            say('removed ' + left.join(', ') + ' from ' + uidsFile());
+        }
+    }
     /* the running manager no longer has the app registered: a restarted
      * one loads it from its registry entry and folders, tile and all */
     if (tx.saved && restoreAppFolders(tx.saved) && managerSoon()) {
@@ -5564,14 +5627,15 @@ function cmdRestore(args) {
     var paths = data.entries.map(function (e) { return e.path; }).concat(fallbackTouched());
     installedTools().forEach(function (t) { paths = paths.concat(toolTouched(t.component)); });
     installedApps().forEach(function (app) { paths.push(appEntryFile(app.id)); });
+    dropStaleBind();
     /* a backup holding main.js itself is restored, and the state before it
      * snapshotted, with the fallback copy unbound; it is bound again below */
-    var unbound = !FAKE && bindMounted(mainJs()) &&
+    var unbound = binds() && bindMounted(mainJs()) &&
         data.entries.some(function (e) { return e.path === mainJs() && e.kind === 'file'; });
     if (unbound) runOk(CFG.umount, [mainJs()]);
     var backup;
     try { backup = takeSnapshot('restore', paths); }
-    catch (e) { if (unbound) runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]); throw e; }
+    catch (e) { if (unbound) bindCopy(); throw e; }
     var appsBefore = installedApps().map(function (a) { return a.id; });
     try {
         var fbWas = fallbackState();
@@ -5618,7 +5682,7 @@ function cmdRestore(args) {
             process.stderr.write('restore failed, rolling back from ' + backup + '\n');
             try { restoreSnapshot(backup); settleFallback(); } catch (e2) { process.stderr.write('rollback failed: ' + e2.message + '\n'); }
         } else if (unbound && !bindMounted(mainJs())) {
-            runOk(CFG.mount, ['--bind', FALLBACK_COPY, mainJs()]);
+            bindCopy();
         }
         throw e;
     }
