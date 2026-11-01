@@ -41,15 +41,20 @@ on the unit, it is made installable, or any MainApp bounce):
 /usr/bin/node /var/opt/app-privacy/current/patch_mainapp.js apply --json
 ```
 
-- Exit 0: patched. The last non-empty stdout line is one JSON object;
+- Exit 0: patched. Every required edit is in place; optional
+  (privacy-only) edits whose anchors this MainApp lacks may be left out,
+  listed by id in `skipped` (README.md, "Required and optional edits").
+  Proceed with the app install either way; an installer may name the
+  skipped edits. The last non-empty stdout line is one JSON object;
   `changed` is `true` when this call wrote the bundles, and
   `restartNeeded` is `true` while a running MainApp started before the
   bundles were last written (by this call or an earlier one). If either
   is true and MainApp is running, bounce MainApp's node child (kill it;
   `oapcontroller` respawns it) before placing the app. Never stop or
   restart `oapcontroller`.
-- Exit 2: refused (the bundles do not match the patch; nothing written).
-  Refuse the app install.
+- Exit 2: refused (a required edit does not fit, or an anchor occurs
+  other than as expected without being absent; nothing written). Refuse
+  the app install.
 - Any other exit, or no tool at that path: refuse the app install. The
   component is installed before any app (the installers install tools
   first, `app-privacy` first of all).
@@ -134,8 +139,10 @@ and names the anchor or the stray occurrence otherwise).
 ## 5. State for the Store
 
 `patch_mainapp.js check --json` prints
-`{"version","command":"check","state":"patched"|"unpatched"|"mismatch","changed":false,"files":[{"kind","path","sha256","reference","state","patchedBy","problems"}],"restartNeeded"}`
-and exits 0 / 1 / 2 for the three states. The patch is in effect when
+`{"version","command":"check","state":"patched"|"unpatched"|"mismatch","changed":false,"mainapp","mainappVersion","fingerprint","files":[{"kind","path","sha256","stockSha256","reference","state","patchedBy","problems"}],"edits":[...],"skipped":[...],"record":{...},"restartNeeded"}`
+and exits 0 / 1 / 2 for the three states. `edits` and `record` are
+described in README.md ("Record"); the deploy tool's `status --json`
+carries the record as `app_privacy_record`. The patch is in effect when
 `state` is `patched` and `restartNeeded` is false. A file's `patchedBy`
 names the earlier release whose edits it carries (`state` `unpatched`
 until `apply` replaces them). `--version` prints `app-privacy <version>`.

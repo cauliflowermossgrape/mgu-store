@@ -1,8 +1,13 @@
 # Deploy tool changelog
 
-## 0.7.1
+## 0.7.2
 
 - iDrive 7 with MainApp 6.5.5: the provisioning fallback (`mgu-deploy.js` and `mgu-app-fallback.service`), `AppManagement` inspection and `CertificateManager` use `<name>.bundle.js` when it is present beside the bytecode-loader stub `<name>.js`, the in-place hook traces `AppManagerStub` directly when MainApp has no `AppManagementController` wrapper, and `tools/oap_link.js` links source packages and generates `oap-sdk` from 6.5.5 donors that ship `bundle.js` at the package root with a minified browserify prelude.
+
+## 0.7.1
+
+- When app-privacy (1.7.0 on) leaves out privacy-only edits this MainApp has no place for, the output says which, once per run: `app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`. `status` shows the same for app-privacy's last run.
+- `status --json` carries app-privacy's record of its runs (`app_privacy_record`, null without one).
 
 ## 0.7.0
 
