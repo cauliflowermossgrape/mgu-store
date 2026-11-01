@@ -1,5 +1,10 @@
 # Deploy tool changelog
 
+## 0.7.1
+
+- When app-privacy leaves out privacy-only edits this MainApp has no place for, app installs go ahead and the output says which, in one line: `app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`. `status` shows the same for app-privacy's last run.
+- `status --json` carries app-privacy's record of its runs (`app_privacy_record`, null without one).
+
 ## 0.7.0
 
 - A tool's `activate` and `deactivate` (`component.json`; `deploy/hu artifact` keeps them): commands run as root, without a shell, in the version's folder, for at most 120 s (`MGU_DEPLOY_HOOK_TIMEOUT_MS`). `activate` runs on every install, update and rollback once the version is in place and `/` is read-only again, before `postInstall` and `check`; a failure is rolled back: an update returns to the previous version, a first install is removed. An install that ran `activate` and is rolled back (a failed `activate` or `check`) runs the previous version's `activate` again. `deactivate` runs before a removal changes anything; a failure keeps the tool, and a removal that fails after it runs the tool's `activate` again. A `{"reboot": "<why>"}` last line marks the tool restart-pending (a removal's, the deploy tool).

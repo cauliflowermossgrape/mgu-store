@@ -50,7 +50,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = '1.6.2';
+const VERSION = '1.7.0';
 const MARKER_KEY = 'mguLocalOnly';
 const OAP_ROOT = '/var/opt/public/oap/';
 const OVERRIDE_FILE = OAP_ROOT + 'oap_12201/data/local-only-apps.json';
@@ -124,7 +124,8 @@ const KNOWN_SHA256 = {
  * for an edit's counterpart in every MainApp release; helper, the id of
  * the predicate copy its code calls (a predicate copy has none). The
  * patch arrays themselves stay [anchor, replacement, expected anchor
- * occurrences]. */
+ * occurrences]. An edit without an entry is required and needs every
+ * predicate copy of its file (plan). */
 const EDIT_INFO = new Map();
 function edit(id, helper, patch) {
     EDIT_INFO.set(patch, { id, helper });
@@ -354,7 +355,8 @@ const KNOWN_SHA256_8_2_10 = {
 };
 const PATCH_SETS_8_2_10 = {
     main: MAIN_PATCHES.map((p) => p[0] === 'this.appRegistry.getAll(),app=>{const appId' ?
-        ins('this._appRegistry.getAll()', KEEP_APP, ',app=>{const appId', 1) : p),
+        edit('update-availability-sweep', 'helper:AppsAutoupdater',
+            ins('this._appRegistry.getAll()', KEEP_APP, ',app=>{const appId', 1)) : p),
     appmanagement: APPMANAGEMENT_PATCHES
 };
 
@@ -611,13 +613,14 @@ function survey(text, patches) {
     const base = removePatches(text, patches);
     const problems = [];
     const edits = patches.map((p) => {
-        const info = EDIT_INFO.get(p) || { id: p[0], helper: null };
+        const info = EDIT_INFO.get(p) || { id: 'untagged:' + p[0].slice(0, 40), helper: null, untagged: true };
         const carried = count(text, p[1]);
         if (carried !== 0 && carried !== p[2]) {
             problems.push('replacement for ' + short(p[0]) + ': ' + carried +
                 ' occurrence(s), expected ' + p[2]);
         }
-        return { patch: p, id: info.id, helper: info.helper, found: count(base, p[0]), carried: carried === p[2] };
+        return { patch: p, id: info.id, helper: info.helper, untagged: !!info.untagged,
+            found: count(base, p[0]), carried: carried === p[2] };
     });
     if (!problems.length) {
         edits.forEach((e) => {
@@ -650,8 +653,9 @@ function isHelper(e) {
 function plan(edits) {
     edits.forEach((e) => {
         e.plan = e.found === e.patch[2] ? 'apply' : e.found === 0 ? 'missing' : 'refused-ambiguous';
-        e.required = REQUIRED_EDITS.indexOf(e.id) >= 0;
+        e.required = e.untagged || REQUIRED_EDITS.indexOf(e.id) >= 0;
     });
+    const untagged = edits.filter((e) => e.untagged);
     const helpers = edits.filter(isHelper);
     edits.filter((e) => !isHelper(e)).forEach((e) => {
         const h = helpers.filter((x) => x.id === e.helper)[0];
@@ -663,7 +667,7 @@ function plan(edits) {
         }
     });
     helpers.forEach((h) => {
-        const users = edits.filter((e) => e.helper === h.id);
+        const users = edits.filter((e) => e.helper === h.id).concat(untagged);
         h.required = users.some((e) => e.required);
         if (h.plan === 'missing') {
             h.plan = h.required ? 'refused-not-found' : 'skipped-not-found';

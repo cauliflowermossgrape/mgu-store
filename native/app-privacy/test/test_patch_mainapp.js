@@ -1500,7 +1500,11 @@ function resultOf(json, id) {
 }
 
 test('every edit has an id, a title and its predicate copy in its own file', () => {
-    RELEASES.forEach((release) => {
+    const all = [];
+    Object.keys(patcher.UNITS).forEach((unit) => patcher.UNITS[unit].mainapps.forEach((m) =>
+        all.push([unit, m.version, () => m.sets.current])));
+    assert.ok(all.length >= RELEASES.length);
+    all.forEach((release) => {
         const sets = release[2]();
         const ids = [];
         Object.keys(sets).forEach((kind) => sets[kind].forEach((p) => {
@@ -1598,8 +1602,9 @@ test('a required anchor with no occurrence refuses everything, on every release'
 });
 
 test('more occurrences than expected, or fewer but some, refuse everything', () => {
-    [['ID7', patcher.PATCH_SETS, '8.3.2', 'update-availability-sweep'], ['ID7', patcher.PATCH_SETS, '8.3.2', 'crash-gate'],
-        ['ID8', patcher.PATCH_SETS_21, '9.3.4', 'release-notes'], ['ID8', patcher.PATCH_SETS_21, '9.3.4', 'package-source']]
+    // anchors every release of the unit shares: no release's edits fit
+    [['ID7', patcher.PATCH_SETS, '8.3.2', 'backend-inventory'], ['ID7', patcher.PATCH_SETS, '8.3.2', 'package-source'],
+        ['ID8', patcher.PATCH_SETS_21, '9.3.4', 'analytics-start'], ['ID8', patcher.PATCH_SETS_21, '9.3.4', 'package-source']]
         .forEach((c) => withMainapp(c[0], c[1], c[2], (b) => {
             const site = anchorOf(c[1], c[3]);
             fs.appendFileSync(b.paths[site.kind], '\nextra();' + site.patch[0]);
@@ -1612,6 +1617,16 @@ test('more occurrences than expected, or fewer but some, refuse everything', () 
             r = runTool(b.args('check'));
             assert.strictEqual(r.code, 2);
         }));
+    // one release's anchor doubled where another release's edits fit: those
+    // are applied, and none of them touches the doubled text
+    withMainapp('ID7', patcher.PATCH_SETS, '8.3.2', (b) => {
+        const site = anchorOf(patcher.PATCH_SETS, 'update-availability-sweep');
+        fs.appendFileSync(b.paths.main, '\nextra();' + site.patch[0]);
+        const r = runTool(b.args('apply'));
+        assert.strictEqual(r.code, 0, r.stdout);
+        assert.strictEqual(lastJson(r.stdout).mainapp, '8.2.10');
+        assert.strictEqual(b.read('main').split(site.patch[0]).length - 1, 2);
+    });
     // an anchor expected twice and found once
     withMainapp('ID7', patcher.PATCH_SETS, '8.3.2', (b) => {
         const site = anchorOf(patcher.PATCH_SETS, 'diag-app-list');
@@ -1677,6 +1692,24 @@ test('an optional site taken by another change reads as missing; a site keeping 
         assert.strictEqual(r.code, 2, r.stdout);
         assert.strictEqual(b.read('main'), altered);
     }));
+
+test('an edit without an id is required and keeps every predicate copy of its file', () => {
+    const extra = ['untaggedSite();', 'untaggedSite()&&isLocalOnlyApp(x);', 1];
+    const sets = { main: patcher.PATCH_SETS.main.concat([extra]), appmanagement: patcher.PATCH_SETS.appmanagement };
+    withMainapp('ID7', sets, '8.3.2', (b) => {
+        ['diag-app-list', 'diag-crash-status', 'diag-entries', 'diag-entry-values'].forEach((id) =>
+            b.edit('main', anchorOf(patcher.PATCH_SETS, id).patch[0], 'gone()'));
+        const both = { current: sets, earlier: [] };
+        let r = patcher.run('apply', b.paths, quiet, NO_PROC, both);
+        assert.strictEqual(r.code, 0, JSON.stringify(r.result));
+        assert.strictEqual(resultOf(r.result, 'helper:DiagOapProvider').result, 'applied');
+        assert.ok(r.result.edits.some((e) => e.id.indexOf('untagged:') === 0 && e.required && e.result === 'applied'));
+        assert.strictEqual(patcher.run('revert', b.paths, quiet, NO_PROC, both).code, 0);
+        b.edit('main', 'untaggedSite();', 'other();');
+        r = patcher.run('apply', b.paths, quiet, NO_PROC, both);
+        assert.strictEqual(r.code, 2);
+    });
+});
 
 test('a MainApp release this tool does not know takes the newest edits that fit it', () => {
     // 8.2.10-like: 8.3.2's anchors without the update-availability sweep

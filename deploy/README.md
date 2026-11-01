@@ -871,6 +871,14 @@ nothing and reports app-privacy pending until the next start. When `apply` fails
 the patch is not in effect, so app installs are refused until `apply`
 succeeds.
 
+An `apply` that leaves out optional edits this MainApp has no place for
+(native/app-privacy/README.md, "Required and optional edits") succeeds:
+app installs go ahead, and the output names them in one line,
+`app-privacy: 11 of 12 privacy edits applied; skipped: update-availability sweep`.
+`status` shows the same for app-privacy's last run, and `status --json`
+carries its record (`/var/opt/app-privacy/edit-record.json`) as
+`app_privacy_record`, null without one.
+
 `uninstall app-privacy` is refused while any app of ours is installed (a
 registry entry whose source `package.json` has `"mguLocalOnly": true`; an
 entry or source that cannot be read counts). Otherwise it runs `revert
