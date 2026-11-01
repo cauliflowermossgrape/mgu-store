@@ -6,7 +6,7 @@
  * no dependencies: Node 18 or newer and the system's OpenSSH client, on
  * Windows, macOS or Linux (deploy/README.md, "mgu-install").
  *
- *   node mgu-install.js first-install [--no-renderer] [--no-uplink] [--token] [<ssh options>]
+ *   node mgu-install.js first-install [--from <folder>] [--no-renderer] [--no-uplink] [--token] [<ssh options>]
  *   node mgu-install.js token [--list [--json] | --remove <id>] [<ssh options>]
  *   node mgu-install.js usb-repo <stick folder> [<input>...]
  *
@@ -19,6 +19,11 @@
  * the release's own deploy tool, which builds the Store on the unit. Newer
  * installed components are kept; running it again is safe. --token adds a
  * GitHub token for the updater afterwards.
+ *
+ * first-install --from <folder> installs from a folder usb-repo wrote
+ * (<folder>/mgu-repo/mgu-store) instead of GitHub, each file checked
+ * against its catalog the same way: download at home, install at the car
+ * without internet.
  *
  * token adds a GitHub token for the updater (no option), lists the tokens
  * (--list: id, label, account; --json as JSON) or removes one (--remove
@@ -781,17 +786,31 @@ function deployToolFiles(artifact) {
     }).concat([{ name: 'component.json', data: members.get('component.json').data, mode: 0o644 }]);
 }
 
+/* first-install --from: a folder usb-repo wrote (<folder>/mgu-repo/mgu-store). */
+function fromFolder(dir) {
+    const d = path.resolve(dir);
+    if (!fs.existsSync(path.join(d, 'catalog.json'))) {
+        const inner = path.join(d, 'mgu-repo', 'mgu-store');
+        throw new Usage(fs.existsSync(path.join(inner, 'catalog.json')) ? `--from: no catalog.json in ${d}; use --from ${inner}` :
+            `--from: no catalog.json in ${d}; give the folder usb-repo wrote, <folder>/mgu-repo/mgu-store`);
+    }
+    return d;
+}
+
 async function firstInstall(o) {
+    // --from: its catalog is read first, so a missing or bad one stops before the token prompt and the unit search
+    const from = o.from ? fromFolder(o.from) : null;
+    const local = from ? dirComponents(from) : null;
+    const label = from || STORE_REPO;
     const token = o.token ? await readToken('GitHub token for the updater (input hidden): ') : null;
     await reach(o);
-    const gh = await githubRepo(STORE_REPO, token);
-    const { components } = await githubComponents(gh);
+    const { components } = local || await githubComponents(await githubRepo(STORE_REPO, token));
     const wanted = WITH.filter((w) => !o[w.skip]);
     const chosen = components.filter((c) => !c.entry.optional || wanted.some((w) => w.id === c.entry.id));
     const withs = wanted.filter((w) => chosen.some((c) => c.entry.id === w.id));
-    wanted.filter((w) => withs.indexOf(w) < 0).forEach((w) => say(`${STORE_REPO}: the catalog has no ${w.id}; installing without it`));
+    wanted.filter((w) => withs.indexOf(w) < 0).forEach((w) => say(`${label}: the catalog has no ${w.id}; installing without it`));
     if (!chosen.some((c) => c.entry.id === 'mgu-deploy')) {
-        throw new Error(`${STORE_REPO}: the catalog has no mgu-deploy`);
+        throw new Error(`${label}: the catalog has no mgu-deploy`);
     }
     const artifacts = [];
     for (const c of chosen) {
@@ -1204,7 +1223,7 @@ const USAGE = FROM_STDIN ? 'usage: deploy/README.md, "mgu-install"' : fs.readFil
 
 function parse(argv) {
     const o = { command: argv[0], host: null, port: '22', bind: null, given: false, user: 'root', identity: null, sshOpts: [],
-        noRenderer: false, noUplink: false, token: false, list: false, json: false, remove: null, rest: [] };
+        noRenderer: false, noUplink: false, token: false, list: false, json: false, remove: null, from: null, rest: [] };
     const value = (i, flag) => {
         if (i >= argv.length) {
             throw new Usage(`${flag} needs a value`);
@@ -1221,6 +1240,7 @@ function parse(argv) {
         else if (a === '--no-renderer' && o.command === 'first-install') o.noRenderer = true;
         else if (a === '--no-uplink' && o.command === 'first-install') o.noUplink = true;
         else if (a === '--token' && o.command === 'first-install') o.token = true;
+        else if (a === '--from' && o.command === 'first-install') o.from = value(++i, a);
         else if (a === '--list' && o.command === 'token') o.list = true;
         else if (a === '--json' && o.command === 'token') o.json = true;
         else if (a === '--remove' && o.command === 'token') o.remove = value(++i, a);

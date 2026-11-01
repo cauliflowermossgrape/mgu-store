@@ -4325,6 +4325,64 @@ function testMguInstallUsb() {
     }
 }
 
+/* first-install --from a folder usb-repo wrote: the same install, no GitHub request. */
+function testMguInstallFrom() {
+    const gh = fakeGithub({ files: [], repos: {} });
+    try {
+        const rel = fakeRelease(gh.api);
+        gh.set({ files: rel.files, repos: { [STORE_REPO]: { token: TOKEN, catalog: rel.catalogIndex } } });
+        const stick = path.join(fs.mkdtempSync(path.join(T, 'from-')), 'MY STICK');
+        fs.mkdirSync(stick);
+        let r = mguInstall(['usb-repo', stick], { bin: installBin(null), api: gh.api, env: { FAKE_GH_TOKEN: TOKEN } });
+        const from = path.join(stick, 'mgu-repo', 'mgu-store');
+        check('mgu-install usb-repo: writes the release as a folder for --from', r.status === 0 &&
+            fs.existsSync(path.join(from, 'catalog.json')), r.out);
+        const root = donorRoot();
+        const opts = { bin: installBin(root), api: gh.api };
+        gh.reset();
+        r = mguInstall(['first-install', '--from', from, '--host', '10.0.0.9', '--no-uplink', '--no-renderer'], opts);
+        const st = r.status === 0 ? root.status() : { components: [] };
+        check('mgu-install first-install --from: the release\'s tools and the Store from the folder, no GitHub request',
+            r.status === 0 && ['app-privacy', 'mgu-updater', 'mgu-deploy', 'robertn_store'].every((id) => st.components.some((x) => x.id === id)) &&
+            !gh.requests().length, `${r.out.slice(-3000)}\n${JSON.stringify(gh.requests())}`);
+        // a tampered artifact: same size, other bytes
+        const bad = fs.mkdtempSync(path.join(T, 'from-bad-'));
+        fs.readdirSync(from).filter((n) => fs.statSync(path.join(from, n)).isFile())
+            .forEach((n) => fs.copyFileSync(path.join(from, n), path.join(bad, n)));
+        const victim = fs.readdirSync(bad).find((n) => n.endsWith('.tgz'));
+        const data = fs.readFileSync(path.join(bad, victim));
+        data[data.length >> 1] ^= 0xff;
+        fs.writeFileSync(path.join(bad, victim), data);
+        r = mguInstall(['first-install', '--from', bad, '--host', '10.0.0.9'], opts);
+        check('mgu-install first-install --from: an artifact that does not match the catalog stops it before connecting',
+            r.status === 1 && r.stderr.includes('sha256 does not match') && !r.calls.length, r.out);
+        r = mguInstall(['first-install', '--from', fs.mkdtempSync(path.join(T, 'from-empty-')), '--host', '10.0.0.9'], opts);
+        check('mgu-install first-install --from: a folder without catalog.json is refused before connecting',
+            r.status === 2 && r.stderr.includes('no catalog.json') && !r.calls.length, r.out);
+        r = mguInstall(['first-install', '--from', stick, '--host', '10.0.0.9'], opts);
+        check('mgu-install first-install --from: the stick root is refused, naming the folder to give',
+            r.status === 2 && r.stderr.includes(from) && !r.calls.length, r.out);
+        // a catalog without mgu-deploy names the folder, not the GitHub repo
+        const nodeploy = fs.mkdtempSync(path.join(T, 'from-nodeploy-'));
+        fs.readdirSync(from).filter((n) => fs.statSync(path.join(from, n)).isFile())
+            .forEach((n) => fs.copyFileSync(path.join(from, n), path.join(nodeploy, n)));
+        const cat = JSON.parse(fs.readFileSync(path.join(nodeploy, 'catalog.json'), 'utf8'));
+        cat.components = (cat.components || []).filter((c) => c.id !== 'mgu-deploy');
+        fs.writeFileSync(path.join(nodeploy, 'catalog.json'), JSON.stringify(cat));
+        r = mguInstall(['first-install', '--from', nodeploy, '--host', '10.0.0.9'], opts);
+        check('mgu-install first-install --from: a catalog without mgu-deploy names the folder',
+            r.status === 1 && r.stderr.includes(`${path.resolve(nodeploy)}: the catalog has no mgu-deploy`) &&
+            !r.stderr.includes(`${STORE_REPO}: the catalog`) && !r.calls.length, r.out);
+        r = mguInstall(['token', '--from', from, '--host', '10.0.0.9'], opts);
+        check('mgu-install: --from goes with first-install only', r.status === 2 &&
+            r.stderr.includes('unknown option --from') && !r.calls.length, r.out);
+        r = mguInstall(['help'], opts);
+        check('mgu-install help: names --from', r.status === 0 && r.stdout.includes('--from <folder>'), r.out);
+    } finally {
+        gh.stop();
+    }
+}
+
 /* What mgu-install does with paths on Windows (path.win32): local paths stay
  * one argument, the unit gets POSIX ones, names on the stick are valid there. */
 function testMguInstallPaths() {
@@ -5689,6 +5747,7 @@ const SUITES = [
     testSourcesAndDonor,
     testMguInstall,
     testMguInstallUsb,
+    testMguInstallFrom,
     testConnect,
     testMguInstallPaths,
     testUpdaterStateRestore,

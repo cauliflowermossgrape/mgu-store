@@ -176,6 +176,13 @@ node mgu-install.js usb-repo <stick> [github:owner/repo | <catalog URL> | <folde
 Without inputs it copies this repository's newest release. Plug the stick
 into the car and use the **USB** page.
 
+A car without the Store yet installs it from the same folder, with no
+internet at the car:
+
+```sh
+node mgu-install.js first-install --from <stick>/mgu-repo/mgu-store --identity <key>
+```
+
 ## Publishing your apps
 
 Any GitHub repository or HTTPS address can be a source, in one of three
